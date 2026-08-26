@@ -1,0 +1,6 @@
+# Normalize line endings: store LF in the repo, check out native.
+* text=auto
+
+# Keep vendored code out of GitHub's language stats so the bar shows my own work.
+**/Drivers/**   linguist-vendored
+**/tweetnacl*   linguist-vendored

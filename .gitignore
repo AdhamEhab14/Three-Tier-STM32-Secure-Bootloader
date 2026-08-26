@@ -1,0 +1,25 @@
+# ---- secrets: NEVER commit the signing key ----
+host/keys/
+
+# ---- build output ----
+**/Debug/
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.su
+*.bak
+
+# ---- HAL / CMSIS drivers are vendored so the repo builds on clone ----
+# (they still regenerate from the .ioc in STM32CubeIDE if you ever need to)
+
+# ---- IDE metadata ----
+**/.settings/
+.metadata/
+
+# ---- python ----
+__pycache__/
+*.pyc
