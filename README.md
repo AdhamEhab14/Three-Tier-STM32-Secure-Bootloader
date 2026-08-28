@@ -85,6 +85,41 @@ The FBL listens on all of its buses at once and answers on whichever one a comma
 on. The Blue Pill is one firmware that can bridge CAN, SPI, or I2C — the host picks the bus
 with a `can:` / `spi:` / `i2c:` prefix, so every link can stay wired at the same time.
 
+## Security model
+
+The trust anchor is asymmetric, not the chip's read protection. Firmware is verified with
+Ed25519, and **the private signing key never touches the device** — it lives only on the PC.
+So even full physical access buys an attacker the code and the *public* key, not the ability
+to sign firmware or forge a version past anti-rollback. That guarantee is the point, and it
+holds regardless of what the silicon's debug protection does.
+
+What it does *not* fully cover on this particular MCU:
+
+- **Confidentiality.** The ChaCha20 key is symmetric and baked into the FBL, so anyone who
+  can read the flash out can decrypt firmware images. The encryption protects firmware in
+  transit and against a remote attacker, not against someone holding this chip.
+- **Flash read-out.** The STM32F103 has only RDP levels 0 and 1 (no level 2), and RDP-1 is
+  defeated by the well-documented debug-assisted bypass (Obermaier & Tatschner, 2017): the
+  debug port isn't fully disabled, so the CPU can be driven to leak flash. Only parts with
+  RDP-2 or hardware secure boot (H5 / L5 / U5 with TrustZone) close that off.
+- **WRP is write-only, and needs RDP-1 to be tamper-evident.** WRP blocks *writes/erase* of
+  the Boot Manager — an ST-Link can't reflash it — but on its own, at RDP level 0, an
+  attacker can rewrite the option bytes to clear WRP and reflash the BM. Paired with RDP
+  level 1 it bites: dropping read protection forces a mass erase, so the lock can be removed
+  only by wiping the chip, never by keeping a *modified* Boot Manager.
+
+Hardening if the threat model included physical attackers:
+
+- Enable **RDP level 1** alongside WRP so any unlock triggers a mass erase (tamper-evident).
+- Move to a part with **RDP level 2 / hardware secure boot** (STM32 H5, L5, U5) to close the
+  debug read-out path.
+- Keep the symmetric key **off-chip** — provisioned per-device from a secure element —
+  instead of baking it into the image.
+
+None of these change the core stance: trust is anchored in the off-device private key, so the
+worst a physical attacker gets is a board running their own code — which no MCU can prevent —
+not the ability to forge firmware for the fleet.
+
 ## Building and running
 
 You need STM32CubeIDE, an ST-Link, and Python with `pyserial` and `pynacl` (plus `bleak` for
