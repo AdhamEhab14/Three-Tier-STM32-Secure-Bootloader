@@ -145,27 +145,65 @@ void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
 }
 
 /* ==========================================================================
- *  Software-loopback self-test
+ *  Software loopback - shared test harness
+ *
+ *  Arming the software loopback makes isotp_user_send_can queue frames into the
+ *  RAM ring instead of driving CAN. BL_ISOTP_SwPump then drains the ring and
+ *  routes each frame to whichever armed link listens on its CAN ID. This lets
+ *  the ISO-TP logic - and anything layered on it, such as the UDS server - run
+ *  on-chip with no CAN peripheral. Used by the self-tests only.
  * ========================================================================== */
 
-/* Drain the software ring into the addressed links, then advance both links. */
-static void swloop_pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
+#define BL_ISOTP_SW_MAX_LINKS 4
+
+static IsoTpLink *g_sw_links[BL_ISOTP_SW_MAX_LINKS];
+static uint32_t   g_sw_rx[BL_ISOTP_SW_MAX_LINKS];
+static int        g_sw_n;
+
+void BL_ISOTP_SwArm(IsoTpLink **links, const uint32_t *rx_ids, int n)
+{
+    int i;
+
+    if (n > BL_ISOTP_SW_MAX_LINKS) {
+        n = BL_ISOTP_SW_MAX_LINKS;
+    }
+    for (i = 0; i < n; i++) {
+        g_sw_links[i] = links[i];
+        g_sw_rx[i]    = rx_ids[i];
+    }
+    g_sw_n     = n;
+    g_swq_head = 0;
+    g_swq_tail = 0;
+    g_swloop_active = 1;
+}
+
+void BL_ISOTP_SwPump(void)
 {
     swframe_t f;
     int i;
 
     while (swq_pop(&f)) {
-        for (i = 0; i < n; i++) {
-            if (f.id == rx_ids[i]) {
-                isotp_on_can_message(links[i], f.data, f.len);
+        for (i = 0; i < g_sw_n; i++) {
+            if (f.id == g_sw_rx[i]) {
+                isotp_on_can_message(g_sw_links[i], f.data, f.len);
                 break;
             }
         }
     }
-    for (i = 0; i < n; i++) {
-        isotp_poll(links[i]);
+    for (i = 0; i < g_sw_n; i++) {
+        isotp_poll(g_sw_links[i]);
     }
 }
+
+void BL_ISOTP_SwDisarm(void)
+{
+    g_swloop_active = 0;
+    g_sw_n = 0;
+}
+
+/* ==========================================================================
+ *  ISO-TP transport self-test (software loopback)
+ * ========================================================================== */
 
 int BL_ISOTP_SelfTest(void)
 {
@@ -190,15 +228,12 @@ int BL_ISOTP_SelfTest(void)
     int rc;
     int i;
 
-    /* Arm software loopback and start with an empty ring. */
-    g_swq_head = 0;
-    g_swq_tail = 0;
-    g_swloop_active = 1;
-
     BL_ISOTP_InitLink(&cmd_link,   BL_ISOTP_ID_CMD,   BL_ISOTP_ID_REPLY,
                       cmd_tx, sizeof(cmd_tx), cmd_rx, sizeof(cmd_rx));
     BL_ISOTP_InitLink(&reply_link, BL_ISOTP_ID_REPLY, BL_ISOTP_ID_CMD,
                       reply_tx, sizeof(reply_tx), reply_rx, sizeof(reply_rx));
+
+    BL_ISOTP_SwArm(links, rx_ids, 2);
 
     rc = 0;
     if (isotp_send(&cmd_link, msg, sizeof(msg)) != ISOTP_RET_OK) {
@@ -209,7 +244,7 @@ int BL_ISOTP_SelfTest(void)
     /* Pump both links until the reply side has the whole message (or we give up). */
     got = 0;
     for (guard = 0; guard < 200000U; guard++) {
-        swloop_pump(links, rx_ids, 2);
+        BL_ISOTP_SwPump();
         if (isotp_receive(&reply_link, out, sizeof(out), &out_len) == ISOTP_RET_OK) {
             got = 1;
             break;
@@ -240,6 +275,6 @@ int BL_ISOTP_SelfTest(void)
     rc = 0;           /* PASS */
 
 done:
-    g_swloop_active = 0;
+    BL_ISOTP_SwDisarm();
     return rc;
 }

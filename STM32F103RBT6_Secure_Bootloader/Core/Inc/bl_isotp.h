@@ -38,6 +38,25 @@ void BL_ISOTP_InitLink(IsoTpLink *link, uint32_t tx_id, uint32_t rx_id,
  */
 void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n);
 
+/* --------------------------------------------------------------------------
+ * Software loopback (shared test harness, used by the ISO-TP and UDS self-tests)
+ *
+ * While armed, isotp_user_send_can queues frames into a RAM ring instead of
+ * driving CAN; BL_ISOTP_SwPump drains the ring and routes each frame to the
+ * armed link that listens on its CAN ID, then advances every armed link. This
+ * exercises the full ISO-TP stack on-chip with no CAN peripheral.
+ * -------------------------------------------------------------------------- */
+
+/* Arm software loopback for `n` links (n <= 4). `rx_ids[i]` is the CAN ID whose
+   frames should be delivered to `links[i]`. Clears the ring. */
+void BL_ISOTP_SwArm(IsoTpLink **links, const uint32_t *rx_ids, int n);
+
+/* Drain the ring into the armed links, then advance every armed link. */
+void BL_ISOTP_SwPump(void);
+
+/* Disarm software loopback (isotp_user_send_can goes back to driving CAN). */
+void BL_ISOTP_SwDisarm(void);
+
 /*
  * Software-loopback self-test: sends a 20-byte message from a "command" link to
  * a "reply" link through the full ISO-TP segmentation (First Frame, Flow
