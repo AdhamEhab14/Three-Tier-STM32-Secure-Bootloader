@@ -53,6 +53,10 @@ void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n);
  *   4 = frames moved but reassembly never finished (timing / protocol)
  *   5 = completed but wrong length
  *   6 = payload corrupted in transit
+ *   7 = HAL_CAN_Init failed         (loopback bring-up)
+ *   8 = HAL_CAN_ConfigFilter failed (loopback bring-up)
+ *   9 = HAL_CAN_Start failed         (loopback bring-up)
+ *  10 = raw single-frame loopback did not echo (CAN peripheral / mode, not ISO-TP)
  */
 int BL_ISOTP_SelfTest(void);
 

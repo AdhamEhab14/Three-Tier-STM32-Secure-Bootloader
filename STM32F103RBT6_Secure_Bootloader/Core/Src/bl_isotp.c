@@ -97,22 +97,61 @@ void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
 
 /* Re-init CAN1 into internal loopback with an accept-all filter, so both links
  * below run on a single board with no transceiver (mirrors CAN_BL_Init). */
-static void isotp_selftest_can_loopback(void)
+/* Re-init CAN1 into internal loopback with an accept-all filter. Returns 0 on
+   success, or the failing step: 7 = Init, 8 = filter config, 9 = Start. */
+static int isotp_selftest_can_loopback(void)
 {
     CAN_FilterTypeDef filter = {0};
 
     HAL_CAN_DeInit(&hcan);
     hcan.Init.Mode = CAN_MODE_LOOPBACK;
-    HAL_CAN_Init(&hcan);
+    if (HAL_CAN_Init(&hcan) != HAL_OK) {
+        return 7;
+    }
 
     filter.FilterBank           = 0;
     filter.FilterMode           = CAN_FILTERMODE_IDMASK;
     filter.FilterScale          = CAN_FILTERSCALE_32BIT;
     filter.FilterFIFOAssignment = CAN_RX_FIFO0;
     filter.FilterActivation     = ENABLE;
-    HAL_CAN_ConfigFilter(&hcan, &filter);
+    if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK) {
+        return 8;
+    }
 
-    HAL_CAN_Start(&hcan);
+    if (HAL_CAN_Start(&hcan) != HAL_OK) {
+        return 9;
+    }
+    return 0;
+}
+
+/* Raw one-frame loopback probe: prove CAN1 echoes its own frame into RX FIFO 0
+   before blaming the ISO-TP layer. 1 = echo seen, 0 = nothing came back. */
+static int isotp_selftest_raw_loopback(void)
+{
+    CAN_TxHeaderTypeDef tx = {0};
+    CAN_RxHeaderTypeDef rx = {0};
+    uint8_t  tx_data[8] = { 'I', 'S', 'O', '-', 'R', 'A', 'W', '!' };
+    uint8_t  rx_data[8] = {0};
+    uint32_t mailbox;
+    uint32_t timeout = 200000U;
+
+    tx.StdId = 0x123U;
+    tx.IDE   = CAN_ID_STD;
+    tx.RTR   = CAN_RTR_DATA;
+    tx.DLC   = 8U;
+
+    if (HAL_CAN_AddTxMessage(&hcan, &tx, tx_data, &mailbox) != HAL_OK) {
+        return 0;
+    }
+    while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) == 0U) {
+        if (timeout-- == 0U) {
+            return 0;
+        }
+    }
+    if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &rx, rx_data) != HAL_OK) {
+        return 0;
+    }
+    return (rx.StdId == 0x123U && rx.DLC == 8U);
 }
 
 int BL_ISOTP_SelfTest(void)
@@ -135,9 +174,16 @@ int BL_ISOTP_SelfTest(void)
     uint32_t out_len = 0;
     uint32_t guard;
     int got;
+    int cs;
     int i;
 
-    isotp_selftest_can_loopback();
+    cs = isotp_selftest_can_loopback();
+    if (cs != 0) {
+        return cs;   /* 7/8/9 = CAN could not be brought up in loopback */
+    }
+    if (!isotp_selftest_raw_loopback()) {
+        return 10;   /* CAN loopback itself is not echoing - not an ISO-TP fault */
+    }
 
     BL_ISOTP_InitLink(&cmd_link,   BL_ISOTP_ID_CMD,   BL_ISOTP_ID_REPLY,
                       cmd_tx, sizeof(cmd_tx), cmd_rx, sizeof(cmd_rx));
