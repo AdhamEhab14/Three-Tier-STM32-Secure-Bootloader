@@ -41,8 +41,18 @@ void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n);
 /*
  * One-board self-test: puts CAN1 into internal loopback, sends a 20-byte
  * message from a "command" link to a "reply" link through the full ISO-TP
- * segmentation, and checks it arrives intact. 1 = pass, 0 = fail.
- * Re-initialises CAN1; intended to run at start-up before normal operation.
+ * segmentation, and checks it arrives intact. Re-initialises CAN1; intended to
+ * run at start-up before normal operation.
+ *
+ * Returns a diagnostic code (0 = pass) so a failure can be localised without a
+ * debugger - the boot hook blinks the code on LD2:
+ *   0 = PASS
+ *   1 = First Frame would not transmit          (CAN TX path / peripheral)
+ *   2 = receiver never saw the First Frame       (loopback echo / RX routing)
+ *   3 = sender stalled after the First Frame      (no Flow Control / CF flow)
+ *   4 = frames moved but reassembly never finished (timing / protocol)
+ *   5 = completed but wrong length
+ *   6 = payload corrupted in transit
  */
 int BL_ISOTP_SelfTest(void);
 

@@ -154,17 +154,26 @@ int main(void)
   /* USER CODE BEGIN 2 */
 #if BL_ISOTP_SELFTEST_ON_BOOT
   /* Throwaway diagnostic: exercise the isotp-c stack in one-board CAN loopback.
-     PASS = LD2 solid ON; FAIL = LD2 fast blink. Halts either way. */
+     PASS (code 0) = LD2 solid ON. FAIL = LD2 blinks the code N times, pauses,
+     and repeats, so the failing stage can be read off without a debugger
+     (codes documented in bl_isotp.h). Halts either way. */
   {
-      int isotp_ok = BL_ISOTP_SelfTest();
-      if (isotp_ok)
+      int isotp_rc = BL_ISOTP_SelfTest();
+      if (isotp_rc == 0)
       {
           HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
           while (1) { /* solid ON = ISO-TP loopback passed */ }
       }
-      else
+      while (1)
       {
-          while (1) { HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin); HAL_Delay(80); }
+          for (int b = 0; b < isotp_rc; b++)
+          {
+              HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+              HAL_Delay(250);
+              HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+              HAL_Delay(250);
+          }
+          HAL_Delay(1500);   /* gap before repeating the count */
       }
   }
 #endif

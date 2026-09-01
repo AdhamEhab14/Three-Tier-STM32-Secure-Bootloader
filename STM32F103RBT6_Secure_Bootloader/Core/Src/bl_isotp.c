@@ -134,6 +134,7 @@ int BL_ISOTP_SelfTest(void)
     uint8_t  out[32] = {0};
     uint32_t out_len = 0;
     uint32_t guard;
+    int got;
     int i;
 
     isotp_selftest_can_loopback();
@@ -144,24 +145,38 @@ int BL_ISOTP_SelfTest(void)
                       reply_tx, sizeof(reply_tx), reply_rx, sizeof(reply_rx));
 
     if (isotp_send(&cmd_link, msg, sizeof(msg)) != ISOTP_RET_OK) {
-        return 0;
+        return 1;   /* couldn't even transmit the First Frame -> CAN TX path */
     }
 
     /* Pump both links until the reply side has the whole message (or we give up). */
+    got = 0;
     for (guard = 0; guard < 2000000U; guard++) {
         BL_ISOTP_Pump(links, rx_ids, 2);
         if (isotp_receive(&reply_link, out, sizeof(out), &out_len) == ISOTP_RET_OK) {
+            got = 1;
             break;
         }
     }
 
+    if (!got) {
+        /* Timed out - report how far the transfer actually got, so a fault can
+           be localised without a debugger (see blink codes in bl_isotp.h). */
+        if (reply_link.receive_size == 0U && reply_link.receive_offset == 0U) {
+            return 2;   /* receiver never saw the First Frame -> loopback echo / RX routing */
+        }
+        if (cmd_link.send_offset < cmd_link.send_size) {
+            return 3;   /* sender stalled after FF -> no Flow Control / CF flow */
+        }
+        return 4;       /* frames moved but reassembly never completed */
+    }
+
     if (out_len != sizeof(msg)) {
-        return 0;
+        return 5;       /* completed but wrong length */
     }
     for (i = 0; i < (int)sizeof(msg); i++) {
         if (out[i] != msg[i]) {
-            return 0;
+            return 6;   /* payload corrupted in transit */
         }
     }
-    return 1;
+    return 0;           /* PASS */
 }
