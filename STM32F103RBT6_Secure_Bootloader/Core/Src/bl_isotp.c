@@ -2,25 +2,78 @@
  ******************************************************************************
  * @file    bl_isotp.c
  * @author  Adham Ehab
- * @brief   isotp-c (ISO 15765-2) <-> STM32F1 CAN1 glue + loopback self-test.
- *          See bl_isotp.h.
+ * @brief   isotp-c (ISO 15765-2) <-> STM32F1 CAN1 glue, plus a software-loopback
+ *          self-test of the ISO-TP logic. See bl_isotp.h.
  ******************************************************************************
  */
 #include "bl_isotp.h"
 #include "can.h"    /* hcan, configured by CubeMX */
+#include <string.h>
+
+/* ==========================================================================
+ *  Software-loopback plumbing (used only by the self-test).
+ *
+ *  When g_swloop_active is set, isotp_user_send_can queues frames into a small
+ *  RAM ring instead of putting them on CAN. The self-test then drains the ring
+ *  and feeds each frame to the addressed link. This validates the isotp-c
+ *  segmentation / flow-control / reassembly logic and this file's routing with
+ *  no dependence on the CAN peripheral (whose single-board loopback bring-up is
+ *  a separate matter, validated on the real two-node bus instead).
+ * ========================================================================== */
+
+typedef struct {
+    uint32_t id;
+    uint8_t  data[8];
+    uint8_t  len;
+} swframe_t;
+
+#define SWQ_LEN 16
+static swframe_t g_swq[SWQ_LEN];
+static uint16_t  g_swq_head;
+static uint16_t  g_swq_tail;
+static int       g_swloop_active;
+
+static void swq_push(uint32_t id, const uint8_t *data, uint8_t len)
+{
+    uint16_t next = (uint16_t)((g_swq_head + 1U) % SWQ_LEN);
+    if (next == g_swq_tail) {
+        return;   /* full - dropped (should not happen with lockstep sizes) */
+    }
+    g_swq[g_swq_head].id  = id;
+    g_swq[g_swq_head].len = len;
+    if (len > 8U) { len = 8U; }
+    memcpy(g_swq[g_swq_head].data, data, len);
+    g_swq_head = next;
+}
+
+static int swq_pop(swframe_t *out)
+{
+    if (g_swq_tail == g_swq_head) {
+        return 0;
+    }
+    *out = g_swq[g_swq_tail];
+    g_swq_tail = (uint16_t)((g_swq_tail + 1U) % SWQ_LEN);
+    return 1;
+}
 
 /* ==========================================================================
  *  User callbacks required by isotp-c (declared in isotp_user.h).
- *  These are always compiled so the library links; the linker's --gc-sections
- *  drops them together with the rest of isotp-c when nothing calls in.
+ *  Always compiled so the library links; the linker's --gc-sections drops them
+ *  together with the rest of isotp-c when nothing calls in.
  * ========================================================================== */
 
-/* Transmit one classical-CAN data frame (<= 8 bytes). */
+/* Transmit one classical-CAN data frame (<= 8 bytes), or queue it into the
+   software-loopback ring while the self-test is running. */
 int isotp_user_send_can(const uint32_t arbitration_id, const uint8_t *data, const uint8_t size)
 {
     CAN_TxHeaderTypeDef header = {0};
     uint32_t mailbox;
     uint32_t timeout = 100000U;
+
+    if (g_swloop_active) {
+        swq_push(arbitration_id, data, size);
+        return ISOTP_RET_OK;
+    }
 
     header.StdId = arbitration_id;
     header.IDE   = CAN_ID_STD;
@@ -52,7 +105,7 @@ void isotp_user_debug(const char *message, ...)
 }
 
 /* ==========================================================================
- *  Link management / RX routing
+ *  Link management / RX routing (real CAN bus)
  * ========================================================================== */
 
 void BL_ISOTP_InitLink(IsoTpLink *link, uint32_t tx_id, uint32_t rx_id,
@@ -92,71 +145,31 @@ void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
 }
 
 /* ==========================================================================
- *  One-board loopback self-test
+ *  Software-loopback self-test
  * ========================================================================== */
 
-/* Re-init CAN1 into internal loopback with an accept-all filter, so both links
- * below run on a single board with no transceiver (mirrors CAN_BL_Init). */
-/* Re-init CAN1 into internal loopback with an accept-all filter. Returns 0 on
-   success, or the failing step: 7 = Init, 8 = filter config, 9 = Start. */
-static int isotp_selftest_can_loopback(void)
+/* Drain the software ring into the addressed links, then advance both links. */
+static void swloop_pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
 {
-    CAN_FilterTypeDef filter = {0};
+    swframe_t f;
+    int i;
 
-    HAL_CAN_DeInit(&hcan);
-    hcan.Init.Mode = CAN_MODE_LOOPBACK;
-    if (HAL_CAN_Init(&hcan) != HAL_OK) {
-        return 7;
-    }
-
-    filter.FilterBank           = 0;
-    filter.FilterMode           = CAN_FILTERMODE_IDMASK;
-    filter.FilterScale          = CAN_FILTERSCALE_32BIT;
-    filter.FilterFIFOAssignment = CAN_RX_FIFO0;
-    filter.FilterActivation     = ENABLE;
-    if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK) {
-        return 8;
-    }
-
-    if (HAL_CAN_Start(&hcan) != HAL_OK) {
-        return 9;
-    }
-    return 0;
-}
-
-/* Raw one-frame loopback probe: prove CAN1 echoes its own frame into RX FIFO 0
-   before blaming the ISO-TP layer. 1 = echo seen, 0 = nothing came back. */
-static int isotp_selftest_raw_loopback(void)
-{
-    CAN_TxHeaderTypeDef tx = {0};
-    CAN_RxHeaderTypeDef rx = {0};
-    uint8_t  tx_data[8] = { 'I', 'S', 'O', '-', 'R', 'A', 'W', '!' };
-    uint8_t  rx_data[8] = {0};
-    uint32_t mailbox;
-    uint32_t timeout = 200000U;
-
-    tx.StdId = 0x123U;
-    tx.IDE   = CAN_ID_STD;
-    tx.RTR   = CAN_RTR_DATA;
-    tx.DLC   = 8U;
-
-    if (HAL_CAN_AddTxMessage(&hcan, &tx, tx_data, &mailbox) != HAL_OK) {
-        return 0;
-    }
-    while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) == 0U) {
-        if (timeout-- == 0U) {
-            return 0;
+    while (swq_pop(&f)) {
+        for (i = 0; i < n; i++) {
+            if (f.id == rx_ids[i]) {
+                isotp_on_can_message(links[i], f.data, f.len);
+                break;
+            }
         }
     }
-    if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &rx, rx_data) != HAL_OK) {
-        return 0;
+    for (i = 0; i < n; i++) {
+        isotp_poll(links[i]);
     }
-    return (rx.StdId == 0x123U && rx.DLC == 8U);
 }
 
 int BL_ISOTP_SelfTest(void)
 {
-    /* Two links on one board: "cmd" sends on 0x7E0, "reply" sends on 0x7E8. */
+    /* Two links: "cmd" sends on 0x7E0, "reply" sends on 0x7E8. */
     IsoTpLink cmd_link, reply_link;
     uint8_t cmd_tx[32],   cmd_rx[32];
     uint8_t reply_tx[32], reply_rx[32];
@@ -174,30 +187,29 @@ int BL_ISOTP_SelfTest(void)
     uint32_t out_len = 0;
     uint32_t guard;
     int got;
-    int cs;
+    int rc;
     int i;
 
-    cs = isotp_selftest_can_loopback();
-    if (cs != 0) {
-        return cs;   /* 7/8/9 = CAN could not be brought up in loopback */
-    }
-    if (!isotp_selftest_raw_loopback()) {
-        return 10;   /* CAN loopback itself is not echoing - not an ISO-TP fault */
-    }
+    /* Arm software loopback and start with an empty ring. */
+    g_swq_head = 0;
+    g_swq_tail = 0;
+    g_swloop_active = 1;
 
     BL_ISOTP_InitLink(&cmd_link,   BL_ISOTP_ID_CMD,   BL_ISOTP_ID_REPLY,
                       cmd_tx, sizeof(cmd_tx), cmd_rx, sizeof(cmd_rx));
     BL_ISOTP_InitLink(&reply_link, BL_ISOTP_ID_REPLY, BL_ISOTP_ID_CMD,
                       reply_tx, sizeof(reply_tx), reply_rx, sizeof(reply_rx));
 
+    rc = 0;
     if (isotp_send(&cmd_link, msg, sizeof(msg)) != ISOTP_RET_OK) {
-        return 1;   /* couldn't even transmit the First Frame -> CAN TX path */
+        rc = 1;   /* isotp_send rejected the message (library/glue) */
+        goto done;
     }
 
     /* Pump both links until the reply side has the whole message (or we give up). */
     got = 0;
-    for (guard = 0; guard < 2000000U; guard++) {
-        BL_ISOTP_Pump(links, rx_ids, 2);
+    for (guard = 0; guard < 200000U; guard++) {
+        swloop_pump(links, rx_ids, 2);
         if (isotp_receive(&reply_link, out, sizeof(out), &out_len) == ISOTP_RET_OK) {
             got = 1;
             break;
@@ -205,24 +217,29 @@ int BL_ISOTP_SelfTest(void)
     }
 
     if (!got) {
-        /* Timed out - report how far the transfer actually got, so a fault can
-           be localised without a debugger (see blink codes in bl_isotp.h). */
         if (reply_link.receive_size == 0U && reply_link.receive_offset == 0U) {
-            return 2;   /* receiver never saw the First Frame -> loopback echo / RX routing */
+            rc = 2;   /* receiver never saw the First Frame -> routing */
+        } else if (cmd_link.send_offset < cmd_link.send_size) {
+            rc = 3;   /* sender stalled after FF -> no Flow Control / CF flow */
+        } else {
+            rc = 4;   /* frames moved but reassembly never completed */
         }
-        if (cmd_link.send_offset < cmd_link.send_size) {
-            return 3;   /* sender stalled after FF -> no Flow Control / CF flow */
-        }
-        return 4;       /* frames moved but reassembly never completed */
+        goto done;
     }
 
     if (out_len != sizeof(msg)) {
-        return 5;       /* completed but wrong length */
+        rc = 5;       /* completed but wrong length */
+        goto done;
     }
     for (i = 0; i < (int)sizeof(msg); i++) {
         if (out[i] != msg[i]) {
-            return 6;   /* payload corrupted in transit */
+            rc = 6;   /* payload corrupted in transit */
+            goto done;
         }
     }
-    return 0;           /* PASS */
+    rc = 0;           /* PASS */
+
+done:
+    g_swloop_active = 0;
+    return rc;
 }

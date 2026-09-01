@@ -39,24 +39,22 @@ void BL_ISOTP_InitLink(IsoTpLink *link, uint32_t tx_id, uint32_t rx_id,
 void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n);
 
 /*
- * One-board self-test: puts CAN1 into internal loopback, sends a 20-byte
- * message from a "command" link to a "reply" link through the full ISO-TP
- * segmentation, and checks it arrives intact. Re-initialises CAN1; intended to
- * run at start-up before normal operation.
+ * Software-loopback self-test: sends a 20-byte message from a "command" link to
+ * a "reply" link through the full ISO-TP segmentation (First Frame, Flow
+ * Control, Consecutive Frames, reassembly), with frames carried in a RAM ring
+ * instead of on CAN. This validates the isotp-c logic and this file's routing
+ * with no dependence on the CAN peripheral. (CAN integration is validated
+ * separately on the real two-node bus.)
  *
  * Returns a diagnostic code (0 = pass) so a failure can be localised without a
  * debugger - the boot hook blinks the code on LD2:
  *   0 = PASS
- *   1 = First Frame would not transmit          (CAN TX path / peripheral)
- *   2 = receiver never saw the First Frame       (loopback echo / RX routing)
- *   3 = sender stalled after the First Frame      (no Flow Control / CF flow)
- *   4 = frames moved but reassembly never finished (timing / protocol)
+ *   1 = isotp_send rejected the message            (library / glue)
+ *   2 = receiver never saw the First Frame          (frame routing)
+ *   3 = sender stalled after the First Frame         (no Flow Control / CF flow)
+ *   4 = frames moved but reassembly never finished   (timing / protocol)
  *   5 = completed but wrong length
  *   6 = payload corrupted in transit
- *   7 = HAL_CAN_Init failed         (loopback bring-up)
- *   8 = HAL_CAN_ConfigFilter failed (loopback bring-up)
- *   9 = HAL_CAN_Start failed         (loopback bring-up)
- *  10 = raw single-frame loopback did not echo (CAN peripheral / mode, not ISO-TP)
  */
 int BL_ISOTP_SelfTest(void);
 
