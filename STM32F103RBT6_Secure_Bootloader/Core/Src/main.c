@@ -34,6 +34,14 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bootloader.h"
+#include "bl_config.h"
+#include "bl_isotp.h"
+
+/* Set to 1 in a throwaway build to run the ISO-TP loopback self-test at boot
+   and halt showing the result on LD2. Leave 0 for normal bootloader operation. */
+#ifndef BL_ISOTP_SELFTEST_ON_BOOT
+#define BL_ISOTP_SELFTEST_ON_BOOT   0
+#endif
 
 /* USER CODE END Includes */
 
@@ -144,6 +152,22 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
+#if BL_ISOTP_SELFTEST_ON_BOOT
+  /* Throwaway diagnostic: exercise the isotp-c stack in one-board CAN loopback.
+     PASS = LD2 solid ON; FAIL = LD2 fast blink. Halts either way. */
+  {
+      int isotp_ok = BL_ISOTP_SelfTest();
+      if (isotp_ok)
+      {
+          HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+          while (1) { /* solid ON = ISO-TP loopback passed */ }
+      }
+      else
+      {
+          while (1) { HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin); HAL_Delay(80); }
+      }
+  }
+#endif
   FBL_EnsureBmState();   /* keep the Boot Manager.s FBL-CRC record current */
 
   /* Power-on self-test. RAM + CRC engine are critical: if either fails we can't
