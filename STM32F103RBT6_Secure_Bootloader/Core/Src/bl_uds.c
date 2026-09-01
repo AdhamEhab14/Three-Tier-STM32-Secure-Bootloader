@@ -91,12 +91,48 @@ static IsoTpLink   g_link;
 static uint8_t     g_link_tx[BL_UDS_LINK_BUF];
 static uint8_t     g_link_rx[BL_UDS_LINK_BUF];
 
+/* ==========================================================================
+ *  Security access (0x27) - seed/key gate for the reprogramming services.
+ *
+ *  requestSeed = subfunction 0x01, sendKey = subfunction 0x02, unlocking
+ *  security level 0x01. The seed/key relation here is a lightweight obfuscation,
+ *  NOT the project's cryptographic root of trust: firmware images are still
+ *  authenticated by their Ed25519 signature at install time. This gate only
+ *  decides whether a UDS client may drive the download services.
+ * ========================================================================== */
+#define BL_UDS_SEC_LEVEL   0x01U
+
+static uint8_t g_seed[4];   /* last seed handed out, awaiting its key */
+
+/* Build a non-zero 4-byte seed from the millisecond tick. */
+static void bl_uds_make_seed(uint8_t seed[4])
+{
+    uint32_t s = (UDSMillis() * 2654435761U) ^ 0x9E3779B9U;
+
+    if (s == 0U) {
+        s = 0xA5A5A5A5U;   /* spec: never hand out an all-zero seed for a locked level */
+    }
+    seed[0] = (uint8_t)(s);
+    seed[1] = (uint8_t)(s >> 8);
+    seed[2] = (uint8_t)(s >> 16);
+    seed[3] = (uint8_t)(s >> 24);
+}
+
+/* Derive the expected key from a seed (key[i] = seed[i] XOR shared secret[i]). */
+static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
+{
+    static const uint8_t secret[4] = { 0x19U, 0x84U, 0xC0U, 0xDEU };
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        key[i] = (uint8_t)(seed[i] ^ secret[i]);
+    }
+}
+
 /* Server event handler. Return UDS_PositiveResponse to accept a request (the
    library builds the positive reply), or a negative response code to reject. */
 static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
 {
-    (void)srv;
-
     switch (event) {
     case UDS_EVT_DiagSessCtrl: {
         UDSDiagSessCtrlArgs_t *a = (UDSDiagSessCtrlArgs_t *)arg;
@@ -108,6 +144,32 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         default:
             return UDS_NRC_SubFunctionNotSupported;
         }
+    }
+
+    case UDS_EVT_SecAccessRequestSeed: {
+        UDSSecAccessRequestSeedArgs_t *a = (UDSSecAccessRequestSeedArgs_t *)arg;
+        if (a->level != BL_UDS_SEC_LEVEL) {
+            return UDS_NRC_SubFunctionNotSupported;
+        }
+        bl_uds_make_seed(g_seed);
+        (void)a->copySeed(srv, g_seed, sizeof(g_seed));   /* append seed to the reply */
+        return UDS_PositiveResponse;
+    }
+
+    case UDS_EVT_SecAccessValidateKey: {
+        UDSSecAccessValidateKeyArgs_t *a = (UDSSecAccessValidateKeyArgs_t *)arg;
+        uint8_t expect[4];
+        if (a->level != BL_UDS_SEC_LEVEL) {
+            return UDS_NRC_SubFunctionNotSupported;
+        }
+        if (a->len != sizeof(expect)) {
+            return UDS_NRC_InvalidKey;
+        }
+        bl_uds_key_from_seed(g_seed, expect);
+        if (memcmp(a->key, expect, sizeof(expect)) != 0) {
+            return UDS_NRC_InvalidKey;
+        }
+        return UDS_PositiveResponse;   /* library records the unlocked level */
     }
 
     /* Housekeeping notifications - no request to answer. */
@@ -148,9 +210,33 @@ void BL_UDS_Poll(void)
 /* ==========================================================================
  *  Software-loopback self-test
  * ========================================================================== */
+
+/* Send one UDS request from `tester` and wait for the reassembled response,
+   pumping the software ring and the server meanwhile. Returns the response
+   length, or 0 if none arrived within the budget. */
+static uint32_t bl_uds_tester_xfer(IsoTpLink *tester,
+                                   const uint8_t *req, uint32_t req_len,
+                                   uint8_t *resp, uint32_t resp_cap)
+{
+    uint32_t out_len = 0;
+    uint32_t guard;
+
+    if (isotp_send(tester, req, req_len) != ISOTP_RET_OK) {
+        return 0;
+    }
+    for (guard = 0; guard < 200000U; guard++) {
+        BL_ISOTP_SwPump();       /* carry frames between the two links */
+        UDSServerPoll(&g_srv);   /* let the server consume the request and answer */
+        if (isotp_receive(tester, resp, resp_cap, &out_len) == ISOTP_RET_OK) {
+            return out_len;
+        }
+    }
+    return 0;
+}
+
 int BL_UDS_SelfTest(void)
 {
-    /* A tester link that plays the diagnostic client for one exchange. */
+    /* A tester link that plays the diagnostic client for the exchange. */
     IsoTpLink tester;
     uint8_t   tester_tx[64];
     uint8_t   tester_rx[64];
@@ -159,12 +245,12 @@ int BL_UDS_SelfTest(void)
     uint32_t   rx_ids[2] = { BL_UDS_ID_REQUEST, BL_UDS_ID_REPLY };
     /* server link receives requests on 0x7E0; tester receives replies on 0x7E8. */
 
-    /* DiagnosticSessionControl -> programming session. */
-    const uint8_t request[2] = { 0x10U, UDS_LEV_DS_PRGS };
-    uint8_t  resp[64] = {0};
-    uint32_t resp_len = 0;
-    uint32_t guard;
-    int rc;
+    uint8_t  req[8];
+    uint8_t  resp[64];
+    uint8_t  seed[4];
+    uint8_t  key[4];
+    uint32_t n;
+    int      rc = 0;
 
     BL_UDS_Init();
     BL_ISOTP_InitLink(&tester, BL_UDS_ID_REQUEST, BL_UDS_ID_REPLY,
@@ -172,29 +258,53 @@ int BL_UDS_SelfTest(void)
 
     BL_ISOTP_SwArm(links, rx_ids, 2);
 
-    rc = 0;
-    if (isotp_send(&tester, request, sizeof(request)) != ISOTP_RET_OK) {
-        rc = 1;   /* tester could not send the request */
+    /* 1) DiagnosticSessionControl -> programming session. */
+    req[0] = 0x10U;
+    req[1] = UDS_LEV_DS_PRGS;
+    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
+    if (n == 0U) {
+        rc = 1;   /* no response at all -> transport/server stalled */
+        goto done;
+    }
+    if (n < 2U || resp[0] != 0x50U || resp[1] != UDS_LEV_DS_PRGS) {
+        rc = 2;   /* session control not accepted */
         goto done;
     }
 
-    rc = 2;   /* assume "no response" until one arrives */
-    for (guard = 0; guard < 200000U; guard++) {
-        BL_ISOTP_SwPump();       /* carry frames between the two links */
-        UDSServerPoll(&g_srv);   /* let the server consume the request and answer */
-        if (isotp_receive(&tester, resp, sizeof(resp), &resp_len) == ISOTP_RET_OK) {
-            rc = 0;
-            break;
-        }
+    /* Security access is blocked for a short boot delay; wait it out so the seed
+       request is not rejected with RequiredTimeDelayNotExpired (0x37). */
+    while ((int32_t)(UDSMillis() - g_srv.sec_access_boot_delay_timer) <= 0) {
+        /* spin: ~1 s of real time on target; advances the tick on host */
     }
-    if (rc != 0) {
+
+    /* 2) SecurityAccess requestSeed. */
+    req[0] = 0x27U;
+    req[1] = 0x01U;
+    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
+    if (n < 6U || resp[0] != 0x67U || resp[1] != 0x01U) {
+        rc = 3;   /* seed not granted */
+        goto done;
+    }
+    seed[0] = resp[2];
+    seed[1] = resp[3];
+    seed[2] = resp[4];
+    seed[3] = resp[5];
+
+    /* 3) SecurityAccess sendKey with the matching key. */
+    bl_uds_key_from_seed(seed, key);
+    req[0] = 0x27U;
+    req[1] = 0x02U;
+    req[2] = key[0];
+    req[3] = key[1];
+    req[4] = key[2];
+    req[5] = key[3];
+    n = bl_uds_tester_xfer(&tester, req, 6U, resp, sizeof(resp));
+    if (n < 2U || resp[0] != 0x67U || resp[1] != 0x02U) {
+        rc = 4;   /* key rejected -> not unlocked */
         goto done;
     }
 
-    /* Expect the positive response: 0x50 <sessionType> <p2 hi><p2 lo>... */
-    if (resp_len < 2U || resp[0] != 0x50U || resp[1] != UDS_LEV_DS_PRGS) {
-        rc = 3;   /* not the expected positive session-control reply */
-    }
+    rc = 0;   /* programming session entered and security unlocked */
 
 done:
     BL_ISOTP_SwDisarm();

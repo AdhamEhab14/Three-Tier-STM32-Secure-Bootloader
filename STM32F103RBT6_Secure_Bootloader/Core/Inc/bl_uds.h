@@ -22,13 +22,14 @@ void BL_UDS_Init(void);
 void BL_UDS_Poll(void);
 
 /*
- * Software-loopback self-test: drives one UDS request/response exchange
- * (DiagnosticSessionControl -> programming session) through the real server and
- * isotp-c, with frames carried in RAM instead of on CAN. Returns 0 on pass, or
- * a stage code:
- *   1 = tester could not send the request
- *   2 = no response within the time budget
- *   3 = response was not the expected positive session-control reply
+ * Software-loopback self-test: drives a UDS reprogramming-unlock sequence
+ * (DiagnosticSessionControl -> programming session, then SecurityAccess
+ * seed/key) through the real server and isotp-c, with frames carried in RAM
+ * instead of on CAN. Returns 0 on pass, or a stage code:
+ *   1 = no response at all (transport / server stalled)
+ *   2 = DiagnosticSessionControl not accepted
+ *   3 = SecurityAccess seed not granted
+ *   4 = SecurityAccess key rejected (not unlocked)
  */
 int BL_UDS_SelfTest(void);
 
