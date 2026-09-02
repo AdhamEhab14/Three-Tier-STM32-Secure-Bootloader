@@ -21,7 +21,7 @@
 #define BL_UDS_ID_REPLY     BL_ISOTP_ID_REPLY   /* 0x7E8 */
 
 /* Size of the server link's message buffers (matches the UDS server buffers). */
-#define BL_UDS_LINK_BUF     512U
+#define BL_UDS_LINK_BUF     256U
 
 /* ==========================================================================
  *  Time base required by iso14229 under UDS_SYS_CUSTOM.
@@ -141,7 +141,7 @@ static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
 #define BL_UDS_DL_BASE     SLOT_B_BASE     /* staging slot base (0x08015000) */
 #define BL_UDS_DL_SIZE     APP_MAX_SIZE    /* bytes the slot can hold         */
 #define BL_UDS_FLASH_PAGE  1024U           /* F103 page size                  */
-#define BL_UDS_MAX_BLOCK   256U            /* TransferData message cap (fits our buffers) */
+#define BL_UDS_MAX_BLOCK   128U            /* TransferData message cap (fits our buffers) */
 #define BL_UDS_RID_ERASE   0xFF00U         /* routineIdentifier: erase staging slot */
 
 static uint32_t g_dl_addr;   /* next flash write address during a download */

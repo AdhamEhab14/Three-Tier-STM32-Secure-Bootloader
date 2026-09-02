@@ -46,7 +46,7 @@
 #define BL_ISOTP_SELFTEST_ON_BOOT   0
 #endif
 #ifndef BL_UDS_SELFTEST_ON_BOOT
-#define BL_UDS_SELFTEST_ON_BOOT     0
+#define BL_UDS_SELFTEST_ON_BOOT     1
 #endif
 
 /* USER CODE END Includes */
@@ -193,6 +193,11 @@ int main(void)
      loopback. Halts showing the result on LD2 (codes documented in bl_uds.h). */
   bl_selftest_report(BL_UDS_SelfTest());
 #endif
+/* In a self-test build the report call above halts, so the normal bootloader
+   body below is never reached. Compile it out then, so --gc-sections drops the
+   full bootloader (crypto, command layer, ...) and the throwaway self-test image
+   fits the 40 KB FBL region alongside the ISO-TP/UDS stack. */
+#if !(BL_ISOTP_SELFTEST_ON_BOOT || BL_UDS_SELFTEST_ON_BOOT)
   FBL_EnsureBmState();   /* keep the Boot Manager.s FBL-CRC record current */
 
   /* Power-on self-test. RAM + CRC engine are critical: if either fails we can't
@@ -229,6 +234,7 @@ int main(void)
       HAL_Delay(80);
   }
   BL_Run();
+#endif /* normal bootloader body (skipped in a self-test build) */
   /* USER CODE END 2 */
 
   /* Infinite loop */
