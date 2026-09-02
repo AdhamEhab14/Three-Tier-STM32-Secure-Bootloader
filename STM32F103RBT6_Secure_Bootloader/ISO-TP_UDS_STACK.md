@@ -64,6 +64,7 @@ isotp-c transport    ── bl_isotp.c ─►  CAN1 (bxCAN)
 | RequestDownload | `0x34` | validates the target lies in the staging slot |
 | TransferData | `0x36` | streams blocks to the flash driver |
 | RequestTransferExit | `0x37` | ends the download |
+| ReadMemoryByAddress | `0x23` | reads the staging slot back (download verification) |
 | ECUReset | `0x11` | accepts and resets the MCU |
 
 The image is streamed into **Slot B** (staging). The existing command layer still owns the
@@ -98,17 +99,33 @@ whole sequence (session → seed/key → erase → RequestDownload → TransferD
 the payload lands at the staging address. This exercises the actual `bl_uds.c` / `bl_isotp.c` /
 `iso14229.c` / `isotp.c` code, only stubbing `HAL_GetTick` and the flash driver.
 
-### On the Nucleo
+### On the Nucleo (software loopback)
 
-1. Set `BL_UDS_SELFTEST_ON_BOOT` to `1` in `main.c` (leave `BL_ISOTP_SELFTEST_ON_BOOT` at `0`).
+1. Set `BL_UDS_SELFTEST_ON_BOOT` to `1` in `main.c` (leave the others at `0`).
 2. Build the **Release** configuration and flash.
-3. Read **LD2**: solid ON = pass; otherwise it blinks a diagnostic code `1..8` (documented in
+3. Read **LD2**: solid ON = pass; otherwise it blinks a diagnostic code `1..9` (documented in
    [`Core/Inc/bl_uds.h`](Core/Inc/bl_uds.h)), pauses ~1.5 s, and repeats. A ~1 s pause before the
    result is normal — the test waits out the SecurityAccess brute-force boot delay.
 4. Set the macro back to `0` for a normal build.
 
 `BL_ISOTP_SELFTEST_ON_BOOT` does the same for the transport layer alone (codes in
 [`Core/Inc/bl_isotp.h`](Core/Inc/bl_isotp.h)).
+
+### On the real two-node CAN bus
+
+The stack has also been driven end to end over a real CAN bus, node to node
+(verified on hardware):
+
+- **Nucleo** built with `BL_UDS_SERVER_ON_BOOT = 1` runs the live UDS server on CAN.
+- **Blue Pill as UDS client** (`BP_UDS_CLIENT_ON_BOOT = 1` in the bridge project) drives the
+  full sequence — session, seed/key, erase, RequestDownload, TransferData, RequestTransferExit,
+  and a ReadMemoryByAddress **read-back that confirms the transferred bytes landed in flash** —
+  and narrates the whole exchange over its USART1 (9600) plus a pass/fail LED.
+- **PC as UDS client**: the bridge's raw ISO-TP passthrough mode (`SET_BRIDGE` bus 3) plus
+  [`host/uds_client.py`](../host/uds_client.py) run the same sequence from the PC.
+
+These are throwaway test builds; every switch defaults to `0`, so the production FBL and the
+normal bridge are unchanged.
 
 ## Flash / RAM budget
 
