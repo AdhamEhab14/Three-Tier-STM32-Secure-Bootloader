@@ -206,6 +206,29 @@ python bl_host.py COMx lockbm
 This write-protects the Boot Manager's pages. To change it later, re-check WRP0–3 in
 STM32CubeProgrammer — that clears the lock without erasing your firmware.
 
+## Diagnostics & validation
+
+Alongside the firmware, an off-target validation layer exercises the standards UDS server
+(`iso14229` + `isotp-c`) without touching the device's flash budget — it runs on a PC, and CI
+runs it on every push.
+
+- **ODX description** (`diagnostics/odx/`) — an ISO 22901 (ODX) description of the server's
+  ISO 14229 services, validated with `odxtools`; loadable in ODX-aware diagnostic tooling.
+- **Conformance suite** (`tests/test_uds_conformance.py`) — pytest cases over a host model of
+  the server (`virtual_ecu.py`): the full reprogramming sequence plus the negative-response
+  matrix (wrong session, locked, bad key, out of range …), with a pass/fail HTML report.
+- **Fuzz / robustness tests** (`tests/test_uds_fuzz.py`) — thousands of malformed and
+  out-of-turn requests asserting the server never crashes, always answers with a well-formed
+  response, and never leaks privilege while locked.
+- **Bus simulation** (`tests/uds_bus_sim.py`) — the same sequence over a virtual CAN bus
+  (python-can), segmented with ISO-TP, printing the CAN frame trace.
+- **CAPL tester** (`diagnostics/canoe/UdsTester.can`) — the sequence as a CAPL node for
+  CANoe / CANalyzer.
+- **CI** (`.github/workflows/ci.yml`) — validates the ODX and runs the conformance and fuzz
+  suites on every push, publishing the report as a build artifact.
+
+See `tests/README.md` and `diagnostics/README.md` for details.
+
 ## Repository layout
 
 ```
@@ -222,6 +245,17 @@ ESP32_OTA_Gateway/               ESP32: Wi-Fi (TCP) and BLE (NUS) gateway to the
 host/
   bl_host.py                       the CLI: version / flash / bist / udsflash / updatefbl / lockbm
   sign_tool.py                     Ed25519 + ChaCha20 key generation and signing
+  uds_client.py                    PC UDS client driving the iso14229 server over CAN
+diagnostics/
+  odx/SecureBootloader.odx-d       ISO 22901 (ODX) description of the UDS services
+  odx/validate_refs.py             dependency-free ODX structural check
+  canoe/UdsTester.can              CAPL tester for CANoe / CANalyzer
+tests/
+  virtual_ecu.py                   host model of the UDS server
+  test_uds_conformance.py          ISO 14229 conformance suite (pytest)
+  test_uds_fuzz.py                 robustness / fuzz tests
+  uds_bus_sim.py                   the UDS sequence over a virtual CAN bus
+.github/workflows/ci.yml           ODX checks + conformance + fuzz suite on every push
 ```
 
 The HAL/CMSIS `Drivers/` folders and build outputs are generated and git-ignored. Open a

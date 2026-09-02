@@ -38,6 +38,7 @@ NRC_REQUEST_OUT_OF_RANGE = 0x31
 NRC_SECURITY_ACCESS_DENIED = 0x33
 NRC_INVALID_KEY = 0x35
 NRC_EXCEEDED_ATTEMPTS = 0x36
+NRC_REQUEST_SEQUENCE_ERROR = 0x24
 
 # After this many bad keys the server locks the level, matching the iso14229
 # attempt limiter. Modelled here so the suite can exercise the 0x36 path.
@@ -101,6 +102,8 @@ class VirtualEcu:
     # -- services -------------------------------------------------------------
 
     def _diagnostic_session_control(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x10, NRC_INCORRECT_LENGTH)
         sub = pdu[1]
         if sub not in (SESSION_DEFAULT, SESSION_PROGRAMMING, SESSION_EXTENDED):
             return self._neg(0x10, NRC_SUBFUNCTION_NOT_SUPPORTED)
@@ -110,6 +113,8 @@ class VirtualEcu:
         return bytes([0x50, sub, 0x00, 0x32, 0x01, 0xF4])
 
     def _security_access(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x27, NRC_INCORRECT_LENGTH)
         sub = pdu[1]
 
         if sub == 0x01:                                  # requestSeed
@@ -124,6 +129,8 @@ class VirtualEcu:
         if sub == 0x02:                                  # sendKey
             if self.key_attempts >= MAX_KEY_ATTEMPTS:
                 return self._neg(0x27, NRC_EXCEEDED_ATTEMPTS)
+            if self.seed is None:                        # sendKey before requestSeed
+                return self._neg(0x27, NRC_REQUEST_SEQUENCE_ERROR)
             key = pdu[2:]
             expected = bytes(s ^ k for s, k in zip(self.seed, SECRET))
             if len(key) != 4 or key != expected:
@@ -138,6 +145,8 @@ class VirtualEcu:
     def _routine_control(self, pdu):
         if not self._reprogramming_allowed():
             return self._neg(0x31, NRC_SECURITY_ACCESS_DENIED)
+        if len(pdu) < 4:
+            return self._neg(0x31, NRC_INCORRECT_LENGTH)
 
         sub = pdu[1]
         rid = (pdu[2] << 8) | pdu[3]
@@ -162,8 +171,8 @@ class VirtualEcu:
     def _request_download(self, pdu):
         if not self._reprogramming_allowed():
             return self._neg(0x34, NRC_SECURITY_ACCESS_DENIED)
-
-        # [0x34][dfi][alfid][addr:4][size:4]
+        if len(pdu) < 11:                                # [0x34][dfi][alfid][addr:4][size:4]
+            return self._neg(0x34, NRC_INCORRECT_LENGTH)
         addr, size = _u32(pdu[3:7]), _u32(pdu[7:11])
         if not self._in_staging(addr, size):
             return self._neg(0x34, NRC_REQUEST_OUT_OF_RANGE)
@@ -172,18 +181,24 @@ class VirtualEcu:
         return bytes([0x74, 0x20]) + MAX_BLOCK.to_bytes(2, "big")
 
     def _transfer_data(self, pdu):
-        bsc = pdu[1]
+        if len(pdu) < 2:
+            return self._neg(0x36, NRC_INCORRECT_LENGTH)
+        if self.dl_addr is None:                         # no RequestDownload came first
+            return self._neg(0x36, NRC_REQUEST_SEQUENCE_ERROR)
         data = pdu[2:]
         off = self.dl_addr - STAGING_BASE
+        if off < 0 or off + len(data) > STAGING_SIZE:    # would run past the slot
+            return self._neg(0x36, NRC_REQUEST_OUT_OF_RANGE)
         self.staging[off:off + len(data)] = data
         self.dl_addr += len(data)
-        return bytes([0x76, bsc])
+        return bytes([0x76, pdu[1]])
 
     def _request_transfer_exit(self, pdu):
         return bytes([0x77])
 
     def _read_memory_by_address(self, pdu):
-        # [0x23][alfid][addr:4][size:4]
+        if len(pdu) < 10:                                # [0x23][alfid][addr:4][size:4]
+            return self._neg(0x23, NRC_INCORRECT_LENGTH)
         addr, size = _u32(pdu[2:6]), _u32(pdu[6:10])
         if size > MAX_BLOCK or not self._in_staging(addr, size):
             return self._neg(0x23, NRC_REQUEST_OUT_OF_RANGE)
@@ -191,12 +206,18 @@ class VirtualEcu:
         return bytes([0x63]) + bytes(self.staging[off:off + size])
 
     def _ecu_reset(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x11, NRC_INCORRECT_LENGTH)
         return bytes([0x51, pdu[1]])
 
     def _communication_control(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x28, NRC_INCORRECT_LENGTH)
         return bytes([0x68, pdu[1]])
 
     def _control_dtc_setting(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x85, NRC_INCORRECT_LENGTH)
         return bytes([0xC5, pdu[1]])
 
     _handlers = {
