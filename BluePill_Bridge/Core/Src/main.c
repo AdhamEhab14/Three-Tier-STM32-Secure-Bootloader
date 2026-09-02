@@ -51,6 +51,13 @@
 #define BUS_SPI 1U
 #define BUS_I2C 2U
 
+/* Set to 1 in a throwaway build to turn the Blue Pill into a UDS client that
+   drives the Nucleo's live iso14229 server over CAN (two-board test), instead
+   of the normal transparent bridge. 0 = normal bridge. */
+#ifndef BP_UDS_CLIENT_ON_BOOT
+#define BP_UDS_CLIENT_ON_BOOT 0
+#endif
+
 #define I2C_ADDR7  0x42U       /* the FBL's I2C slave address (7-bit) */
 
 /* SPI handshake lines to the FBL slave */
@@ -253,6 +260,101 @@ static int forward_i2c(const uint8_t *cmd, uint32_t total, uint8_t *reply, uint3
   while (READY_IS_HIGH()) { if (++guard > 2000000U) break; }
   return 1;
 }
+
+#if BP_UDS_CLIENT_ON_BOOT
+/* ==========================================================================
+ *  UDS client (two-board test): drive the Nucleo's iso14229 server over CAN.
+ *  Requests go out on 0x7E0 (multi-frame handled by bp_cantp_send); the server's
+ *  single-frame replies come back on 0x7E8. Result on the LED (PC13, active low):
+ *  solid ON = full sequence passed; else it blinks the failing stage 2..8.
+ * ========================================================================== */
+#define BP_LED_ON()   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET)
+#define BP_LED_OFF()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET)
+
+/* Send a UDS request and read the single-frame reply. Returns reply length,
+   or 0 on failure. */
+static uint32_t bp_uds_xfer(const uint8_t *req, uint32_t req_len,
+                            uint8_t *resp, uint32_t timeout_ms)
+{
+  uint32_t rlen = 0U;
+  if (!bp_cantp_send(CAN_CMD_ID, req, req_len)) return 0U;
+  if (!bp_cantp_recv_sf(resp, &rlen, timeout_ms)) return 0U;
+  return rlen;
+}
+
+/* Show a result code on the LED and halt (0 = solid ON = pass). */
+static void bp_uds_report(int code)
+{
+  if (code == 0) { BP_LED_ON(); while (1) { } }
+  while (1)
+  {
+    for (int b = 0; b < code; b++) { BP_LED_ON(); HAL_Delay(250); BP_LED_OFF(); HAL_Delay(250); }
+    HAL_Delay(1500);
+  }
+}
+
+/* Run the full reprogramming sequence against the server. Never returns. */
+static void bp_uds_client(void)
+{
+  const uint32_t SLOT_B = 0x08015000U;                 /* staging slot base (matches the FBL map) */
+  static const uint8_t secret[4] = { 0x19U, 0x84U, 0xC0U, 0xDEU };
+  uint8_t  req[16];
+  uint8_t  resp[16];
+  uint8_t  seed[4], key[4];
+  uint32_t n;
+  int      i;
+
+  HAL_Delay(300);   /* let the server settle after power-up */
+
+  /* 1) DiagnosticSessionControl -> programming session. */
+  req[0] = 0x10U; req[1] = 0x02U;
+  n = bp_uds_xfer(req, 2U, resp, 2000U);
+  if (n < 2U || resp[0] != 0x50U || resp[1] != 0x02U) bp_uds_report(2);
+
+  /* Wait out the server's ~1 s SecurityAccess boot delay. */
+  HAL_Delay(1200);
+
+  /* 2) SecurityAccess requestSeed. */
+  req[0] = 0x27U; req[1] = 0x01U;
+  n = bp_uds_xfer(req, 2U, resp, 2000U);
+  if (n < 6U || resp[0] != 0x67U || resp[1] != 0x01U) bp_uds_report(3);
+  seed[0] = resp[2]; seed[1] = resp[3]; seed[2] = resp[4]; seed[3] = resp[5];
+
+  /* 3) SecurityAccess sendKey (key = seed XOR shared secret). */
+  for (i = 0; i < 4; i++) key[i] = (uint8_t)(seed[i] ^ secret[i]);
+  req[0] = 0x27U; req[1] = 0x02U;
+  req[2] = key[0]; req[3] = key[1]; req[4] = key[2]; req[5] = key[3];
+  n = bp_uds_xfer(req, 6U, resp, 2000U);
+  if (n < 2U || resp[0] != 0x67U || resp[1] != 0x02U) bp_uds_report(4);
+
+  /* 4) RoutineControl start -> erase the staging slot (routineId 0xFF00). */
+  req[0] = 0x31U; req[1] = 0x01U; req[2] = 0xFFU; req[3] = 0x00U;
+  n = bp_uds_xfer(req, 4U, resp, 5000U);   /* erase can be slow */
+  if (n < 2U || resp[0] != 0x71U || resp[1] != 0x01U) bp_uds_report(5);
+
+  /* 5) RequestDownload: 8 bytes at SLOT_B. [0x34][dfi=0][ALFID=0x44][addr:4][size:4] */
+  req[0] = 0x34U; req[1] = 0x00U; req[2] = 0x44U;
+  req[3] = (uint8_t)(SLOT_B >> 24); req[4] = (uint8_t)(SLOT_B >> 16);
+  req[5] = (uint8_t)(SLOT_B >> 8);  req[6] = (uint8_t)(SLOT_B);
+  req[7] = 0x00U; req[8] = 0x00U; req[9] = 0x00U; req[10] = 0x08U;
+  n = bp_uds_xfer(req, 11U, resp, 2000U);
+  if (n < 1U || resp[0] != 0x74U) bp_uds_report(6);
+
+  /* 6) TransferData block #1: [0x36][BSC=1][8 payload bytes]. */
+  req[0] = 0x36U; req[1] = 0x01U;
+  req[2] = 0xDEU; req[3] = 0xADU; req[4] = 0xBEU; req[5] = 0xEFU;
+  req[6] = 0x11U; req[7] = 0x22U; req[8] = 0x33U; req[9] = 0x44U;
+  n = bp_uds_xfer(req, 10U, resp, 3000U);
+  if (n < 2U || resp[0] != 0x76U || resp[1] != 0x01U) bp_uds_report(7);
+
+  /* 7) RequestTransferExit. */
+  req[0] = 0x37U;
+  n = bp_uds_xfer(req, 1U, resp, 2000U);
+  if (n < 1U || resp[0] != 0x77U) bp_uds_report(8);
+
+  bp_uds_report(0);   /* full UDS reprogramming sequence succeeded over real CAN */
+}
+#endif /* BP_UDS_CLIENT_ON_BOOT */
 /* USER CODE END 0 */
 
 /**
@@ -300,6 +402,10 @@ int main(void)
   NSS_HIGH();   /* SPI slave deselected until we drive a transaction */
 
   for (int i = 0; i < 6; i++) { LED_TOGGLE(); HAL_Delay(100); }   /* boot = alive */
+
+#if BP_UDS_CLIENT_ON_BOOT
+  bp_uds_client();   /* two-board UDS test: drive the Nucleo server, never returns */
+#endif
 
   uint8_t frame[200];   /* a command frame from the PC (VERIFY is ~170 bytes) */
   uint8_t reply[64];    /* the FBL's reply: [ACK][len][payload]               */

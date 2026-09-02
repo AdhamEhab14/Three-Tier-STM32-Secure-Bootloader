@@ -37,16 +37,22 @@
 #include "bl_config.h"
 #include "bl_isotp.h"
 #include "bl_uds.h"
+#include "can_bl.h"
 
-/* Set either to 1 in a throwaway build to run the matching self-test at boot and
-   halt showing the result on LD2 (0 = normal bootloader operation). Run one at a
-   time. Result: LD2 solid = pass; otherwise LD2 blinks the diagnostic code N
-   times, pauses, and repeats (codes in bl_isotp.h / bl_uds.h). */
+/* Set one of these to 1 in a throwaway build (0 = normal bootloader operation).
+   SELFTEST builds run a software-loopback test at boot and halt showing the
+   result on LD2 (solid = pass; else it blinks the code N times - see
+   bl_isotp.h / bl_uds.h). SERVER runs the live iso14229 UDS server on the real
+   CAN bus (for the two-board test with the BluePill UDS client). Any of these
+   compiles out the normal bootloader body so the throwaway image fits. */
 #ifndef BL_ISOTP_SELFTEST_ON_BOOT
 #define BL_ISOTP_SELFTEST_ON_BOOT   0
 #endif
 #ifndef BL_UDS_SELFTEST_ON_BOOT
-#define BL_UDS_SELFTEST_ON_BOOT     1
+#define BL_UDS_SELFTEST_ON_BOOT     0
+#endif
+#ifndef BL_UDS_SERVER_ON_BOOT
+#define BL_UDS_SERVER_ON_BOOT       0
 #endif
 
 /* USER CODE END Includes */
@@ -193,11 +199,30 @@ int main(void)
      loopback. Halts showing the result on LD2 (codes documented in bl_uds.h). */
   bl_selftest_report(BL_UDS_SelfTest());
 #endif
-/* In a self-test build the report call above halts, so the normal bootloader
-   body below is never reached. Compile it out then, so --gc-sections drops the
-   full bootloader (crypto, command layer, ...) and the throwaway self-test image
-   fits the 40 KB FBL region alongside the ISO-TP/UDS stack. */
-#if !(BL_ISOTP_SELFTEST_ON_BOOT || BL_UDS_SELFTEST_ON_BOOT)
+#if BL_UDS_SERVER_ON_BOOT
+  /* Throwaway build: run the live iso14229 UDS server on the real CAN bus so a
+     second node (the BluePill UDS client) can drive the reprogramming sequence
+     over the wire. LD2 blinks ~4 Hz as a "server alive" heartbeat. */
+  {
+      uint32_t hb = HAL_GetTick();
+      CAN_BL_Init();    /* CAN1 normal mode, accept-all filter, started */
+      BL_UDS_Init();
+      for (;;)
+      {
+          BL_UDS_Poll();
+          if (HAL_GetTick() - hb >= 250U)
+          {
+              HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+              hb = HAL_GetTick();
+          }
+      }
+  }
+#endif
+/* In a throwaway self-test/server build the code above never returns, so the
+   normal bootloader body below is unreachable. Compile it out then, so
+   --gc-sections drops the full bootloader (crypto, command layer, ...) and the
+   throwaway image fits the 40 KB FBL region alongside the ISO-TP/UDS stack. */
+#if !(BL_ISOTP_SELFTEST_ON_BOOT || BL_UDS_SELFTEST_ON_BOOT || BL_UDS_SERVER_ON_BOOT)
   FBL_EnsureBmState();   /* keep the Boot Manager.s FBL-CRC record current */
 
   /* Power-on self-test. RAM + CRC engine are critical: if either fails we can't
