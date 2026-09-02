@@ -6,19 +6,23 @@ against the rule in `Core/Src/bl_uds.c` - both the services that must be
 accepted and the malformed / out-of-turn requests that must be refused with a
 specific negative response code.
 
-It runs entirely on the PC, with no board and no CAN hardware, against a
-host-side model of the server (`virtual_ecu.py`). The tests reach the ECU only
-through the small `Uds` helper in `conftest.py`, so the same cases can later be
-pointed at the real Nucleo by swapping in a bridge transport.
+By default it runs entirely on the PC, with no board and no CAN hardware, against
+a host-side model of the server (`virtual_ecu.py`). The tests reach the ECU only
+through the small `Uds` helper in `conftest.py`, so the same cases can also be
+pointed at the real Nucleo (see *Running against real hardware*).
 
 ## Files
 
 | File | Role |
 |------|------|
 | `virtual_ecu.py` | host model of the `bl_uds.c` UDS server (seed/key, session gate, staging window, CRC, NRCs) |
-| `conftest.py` | the `Uds` client helper and the per-test fixture |
-| `test_uds_conformance.py` | the 18 conformance cases |
+| `conftest.py` | the `Uds` client helper and the transport-selecting fixture |
+| `test_uds_conformance.py` | the conformance cases (accepted services + negative-response matrix) |
+| `test_uds_fuzz.py` | robustness / fuzz tests (malformed and out-of-turn requests) |
+| `test_uds_hardware.py` | conformance for the production server, run against the real board |
 | `uds_bus_sim.py` | the same exchange over a virtual CAN bus, with a frame trace |
+| `prod_bridge.py` | `CMD_UDS`-over-bridge transport to the production server |
+| `serial_bridge.py` | raw ISO-TP transport (standards server; needs raw-mode bridge firmware) |
 | `requirements.txt` | `pytest`, `pytest-html`, `python-can` |
 
 ## Running it
@@ -43,6 +47,37 @@ trace a bus monitor would have captured.
 ```bash
 python uds_bus_sim.py
 ```
+
+## Running against real hardware
+
+The firmware has two UDS servers, so there are two hardware paths.
+
+### Production server over the CAN bridge — the working path
+
+`test_uds_hardware.py` drives the shipping hand-rolled UDS server in
+`bootloader.c` over the real CAN bus, through the Blue Pill bridge, using the
+same `CMD_UDS` tunnel `host/bl_host.py` uses. Point `HW_PORT` at the bridge:
+
+```bash
+# Windows - through the Blue Pill bridge onto CAN
+set HW_PORT=can:COM6
+pytest tests/test_uds_hardware.py -v
+```
+
+`HW_PORT` also accepts a direct ST-Link COM (`set HW_PORT=COM3`, board held in
+bootloader mode) to reach the FBL over UART. Without `HW_PORT` the module is
+skipped, so CI and the model suite are unaffected. Every case is
+**non-destructive** — it only stages a few bytes into the A/B staging slot and
+never runs the install routine, so the live app is never touched.
+
+### Standards server — needs the raw-mode bridge
+
+The model suite (`test_uds_conformance.py`) matches the standards `iso14229`
+server (`bl_uds.c`), reached over a raw ISO-TP bridge mode. Setting
+`UDS_TARGET=serial:COMx` points that suite at the board via `serial_bridge.py`,
+but it needs bridge firmware that implements the raw passthrough (bus 3) and a
+Nucleo built with `BL_UDS_SERVER_ON_BOOT = 1`. The current bridge firmware does
+not answer that handshake, so this path is parked until that firmware lands.
 
 ## What it covers
 
