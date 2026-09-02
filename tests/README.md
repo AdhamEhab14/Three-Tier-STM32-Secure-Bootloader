@@ -70,6 +70,13 @@ skipped, so CI and the model suite are unaffected. Every case is
 **non-destructive** — it only stages a few bytes into the A/B staging slot and
 never runs the install routine, so the live app is never touched.
 
+**How it was verified:** all cases pass on hardware over the direct **ST-Link
+UART** (`HW_PORT=COM3`, board in bootloader mode). The UDS handler is
+transport-agnostic (`BL_ProcessFrame` dispatches the same `UDS_Handle` for every
+link), so this validates the server across transports; the CAN path is separately
+confirmed to carry it (`bl_host.py can:COMx` reads the version and DIDs over the
+bus).
+
 ### Standards server — needs the raw-mode bridge
 
 The model suite (`test_uds_conformance.py`) matches the standards `iso14229`
