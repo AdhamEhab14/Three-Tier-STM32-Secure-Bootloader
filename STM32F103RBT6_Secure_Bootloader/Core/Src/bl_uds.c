@@ -143,8 +143,38 @@ static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
 #define BL_UDS_FLASH_PAGE  1024U           /* F103 page size                  */
 #define BL_UDS_MAX_BLOCK   128U            /* TransferData message cap (fits our buffers) */
 #define BL_UDS_RID_ERASE   0xFF00U         /* routineIdentifier: erase staging slot */
+#define BL_UDS_RID_CHECK   0xFF01U         /* routineIdentifier: CRC-32 a region (CheckMemory) */
 
 static uint32_t g_dl_addr;   /* next flash write address during a download */
+
+/* Running CRC-32 (reflected, poly 0xEDB88320) over a buffer. */
+static uint32_t bl_uds_crc32_step(uint32_t crc, const uint8_t *data, uint32_t len)
+{
+    uint32_t i;
+    int k;
+    for (i = 0U; i < len; i++) {
+        crc ^= data[i];
+        for (k = 0; k < 8; k++) {
+            crc = (crc & 1U) ? ((crc >> 1) ^ 0xEDB88320U) : (crc >> 1);
+        }
+    }
+    return crc;
+}
+
+/* CRC-32 over a flash region, read back through the flash driver in chunks. */
+static uint32_t bl_uds_crc32_region(uint32_t addr, uint32_t size)
+{
+    uint32_t crc = 0xFFFFFFFFU;
+    uint8_t  buf[64];
+    uint32_t done = 0U;
+    while (done < size) {
+        uint32_t n = (size - done > sizeof(buf)) ? (uint32_t)sizeof(buf) : (size - done);
+        FlashIf_Read(addr + done, buf, (unsigned long)n);
+        crc = bl_uds_crc32_step(crc, buf, n);
+        done += n;
+    }
+    return crc ^ 0xFFFFFFFFU;
+}
 
 /* True only after SecurityAccess unlocked level 1 in a programming session. */
 static int bl_uds_reprogramming_allowed(const UDSServer_t *srv)
@@ -216,8 +246,34 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
             }
             return UDS_PositiveResponse;
         }
+        if (a->id == BL_UDS_RID_CHECK && a->ctrlType == UDS_LEV_RCTP_STR) {
+            /* CheckMemory: optionRecord = [addr:4][size:4]; reply with the CRC-32. */
+            uint32_t addr, size, crc;
+            uint8_t  rec[4];
+            if (a->len < 8U) {
+                return UDS_NRC_IncorrectMessageLengthOrInvalidFormat;
+            }
+            addr = ((uint32_t)a->optionRecord[0] << 24) | ((uint32_t)a->optionRecord[1] << 16) |
+                   ((uint32_t)a->optionRecord[2] << 8)  |  (uint32_t)a->optionRecord[3];
+            size = ((uint32_t)a->optionRecord[4] << 24) | ((uint32_t)a->optionRecord[5] << 16) |
+                   ((uint32_t)a->optionRecord[6] << 8)  |  (uint32_t)a->optionRecord[7];
+            if (addr < BL_UDS_DL_BASE || size == 0U ||
+                (addr + size) > (BL_UDS_DL_BASE + BL_UDS_DL_SIZE)) {
+                return UDS_NRC_RequestOutOfRange;
+            }
+            crc = bl_uds_crc32_region(addr, size);
+            rec[0] = (uint8_t)(crc >> 24); rec[1] = (uint8_t)(crc >> 16);
+            rec[2] = (uint8_t)(crc >> 8);  rec[3] = (uint8_t)(crc);
+            a->copyStatusRecord(srv, rec, sizeof(rec));
+            return UDS_PositiveResponse;
+        }
         return UDS_NRC_RequestOutOfRange;
     }
+
+    /* Accepted during programming to keep other traffic from interfering. */
+    case UDS_EVT_CommCtrl:
+    case UDS_EVT_ControlDTCSetting:
+        return UDS_PositiveResponse;
 
     case UDS_EVT_RequestDownload: {
         UDSRequestDownloadArgs_t *a = (UDSRequestDownloadArgs_t *)arg;
@@ -471,7 +527,34 @@ int BL_UDS_SelfTest(void)
         }
     }
 
-    rc = 0;   /* full unlock + erase + download + exit + verified read-back */
+    /* 9) RoutineControl CheckMemory: [0x31][start][0xFF 0x01][addr:4][size:4]
+          -> [0x71][start][0xFF 0x01][crc:4]; the server's CRC must match ours. */
+    {
+        static const uint8_t payload[8] = {
+            0xDEU, 0xADU, 0xBEU, 0xEFU, 0x11U, 0x22U, 0x33U, 0x44U
+        };
+        uint32_t exp = bl_uds_crc32_step(0xFFFFFFFFU, payload, 8U) ^ 0xFFFFFFFFU;
+        uint32_t got;
+        uint8_t  cm[12] = {
+            0x31U, UDS_LEV_RCTP_STR, 0xFFU, 0x01U,
+            (uint8_t)(BL_UDS_DL_BASE >> 24), (uint8_t)(BL_UDS_DL_BASE >> 16),
+            (uint8_t)(BL_UDS_DL_BASE >> 8),  (uint8_t)(BL_UDS_DL_BASE),
+            0x00U, 0x00U, 0x00U, 0x08U
+        };
+        n = bl_uds_tester_xfer(&tester, cm, sizeof(cm), resp, sizeof(resp));
+        if (n < 8U || resp[0] != 0x71U || resp[2] != 0xFFU || resp[3] != 0x01U) {
+            rc = 10;   /* CheckMemory routine rejected */
+            goto done;
+        }
+        got = ((uint32_t)resp[4] << 24) | ((uint32_t)resp[5] << 16) |
+              ((uint32_t)resp[6] << 8)  |  (uint32_t)resp[7];
+        if (got != exp) {
+            rc = 10;   /* CheckMemory CRC did not match */
+            goto done;
+        }
+    }
+
+    rc = 0;   /* unlock + erase + download + exit + read-back + CheckMemory all passed */
 
 done:
     BL_ISOTP_SwDisarm();
