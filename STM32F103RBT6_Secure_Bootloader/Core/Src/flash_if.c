@@ -46,3 +46,12 @@ int FlashIf_Write(unsigned long addr, const unsigned char *data, unsigned long l
     FLASH_Lock();
     return 1;
 }
+
+int FlashIf_Read(unsigned long addr, unsigned char *data, unsigned long len)
+{
+    const volatile unsigned char *src = (const volatile unsigned char *)addr;
+    for (unsigned long i = 0U; i < len; i++) {
+        data[i] = src[i];
+    }
+    return 1;
+}

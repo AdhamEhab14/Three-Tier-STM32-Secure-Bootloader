@@ -36,6 +36,7 @@ void BL_UDS_Poll(void);
  *   6 = RequestDownload (0x34) rejected
  *   7 = TransferData (0x36) rejected
  *   8 = RequestTransferExit (0x37) rejected
+ *   9 = ReadMemoryByAddress (0x23) read-back did not match what was written
  */
 int BL_UDS_SelfTest(void);
 

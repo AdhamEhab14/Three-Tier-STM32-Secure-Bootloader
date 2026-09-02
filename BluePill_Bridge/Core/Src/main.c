@@ -51,6 +51,7 @@
 #define BUS_CAN 0U
 #define BUS_SPI 1U
 #define BUS_I2C 2U
+#define BUS_CAN_RAW 3U         /* raw ISO-TP passthrough for a PC UDS client */
 
 /* Set to 1 in a throwaway build to turn the Blue Pill into a UDS client that
    drives the Nucleo's live iso14229 server over CAN (two-board test), instead
@@ -178,6 +179,43 @@ static int bp_cantp_recv_sf(uint8_t *data, uint32_t *length, uint32_t timeout_ms
   return 0;
 }
 
+/* Receive one ISO-TP message (single- or multi-frame), acting as the receiver:
+   for a multi-frame message we send lockstep Flow Control (BS=1) on `fc_id`.
+   Returns 1 on a complete message. */
+static int bp_cantp_recv(uint8_t *data, uint32_t *length, uint32_t fc_id)
+{
+  uint8_t  frame[8];
+  uint32_t total, offset, chunk, i, spin;
+
+  spin = 2000000U;
+  if (!bp_recv_frame(frame, &spin)) return 0;
+
+  if ((frame[0] & 0xF0U) == 0x00U) {           /* Single Frame */
+    uint32_t plen = frame[0] & 0x0FU;
+    for (i = 0; i < plen; i++) data[i] = frame[1 + i];
+    *length = plen;
+    return 1;
+  }
+  if ((frame[0] & 0xF0U) == 0x10U) {           /* First Frame */
+    total = ((uint32_t)(frame[0] & 0x0FU) << 8) | frame[1];
+    for (i = 0; i < 6U; i++) data[i] = frame[2 + i];
+    offset = 6U;
+    while (offset < total) {
+      uint8_t fc[3] = { 0x30U, 0x01U, 0x00U };  /* Clear To Send, BS=1, STmin=0 */
+      bp_send_frame(fc_id, fc, 3U);
+      spin = 2000000U;
+      if (!bp_recv_frame(frame, &spin)) return 0;
+      if ((frame[0] & 0xF0U) != 0x20U) return 0;
+      chunk = (total - offset > 7U) ? 7U : (total - offset);
+      for (i = 0; i < chunk; i++) data[offset + i] = frame[1 + i];
+      offset += chunk;
+    }
+    *length = total;
+    return 1;
+  }
+  return 0;
+}
+
 /* Relay one command over CAN, read the single-frame reply. */
 static int forward_can(const uint8_t *cmd, uint32_t total, uint8_t *reply, uint32_t *rlen)
 {
@@ -266,8 +304,9 @@ static int forward_i2c(const uint8_t *cmd, uint32_t total, uint8_t *reply, uint3
 /* ==========================================================================
  *  UDS client (two-board test): drive the Nucleo's iso14229 server over CAN.
  *  Requests go out on 0x7E0 (multi-frame handled by bp_cantp_send); the server's
- *  single-frame replies come back on 0x7E8. Result on the LED (PC13, active low):
- *  solid ON = full sequence passed; else it blinks the failing stage 2..8.
+ *  replies come back on 0x7E8. Result on the LED (PC13, active low) and over
+ *  USART1: solid ON = full sequence passed; else it blinks the failing stage
+ *  2..9 (9 = read-back mismatch). The full transcript is printed to the PC.
  * ========================================================================== */
 #define BP_LED_ON()   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET)
 #define BP_LED_OFF()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET)
@@ -388,7 +427,30 @@ static void bp_uds_client(void)
   n = bp_uds_xfer("\r\n[7] RequestTransferExit", req, 1U, resp, 2000U);
   if (n < 1U || resp[0] != 0x77U) bp_uds_report(8);
 
-  bp_uds_report(0);   /* full UDS reprogramming sequence succeeded over real CAN */
+  /* 8) ReadMemoryByAddress: read the 8 bytes back off flash and verify they
+        match what we transferred. [0x23][ALFID=0x44][addr:4][size:4]. The reply
+        [0x63][8 bytes] is multi-frame, so use the multi-frame receiver. */
+  {
+    static const uint8_t want[8] = { 0xDEU, 0xADU, 0xBEU, 0xEFU, 0x11U, 0x22U, 0x33U, 0x44U };
+    uint8_t  rd[16];
+    uint32_t rlen = 0U;
+
+    req[0] = 0x23U; req[1] = 0x44U;
+    req[2] = (uint8_t)(SLOT_B >> 24); req[3] = (uint8_t)(SLOT_B >> 16);
+    req[4] = (uint8_t)(SLOT_B >> 8);  req[5] = (uint8_t)(SLOT_B);
+    req[6] = 0x00U; req[7] = 0x00U; req[8] = 0x00U; req[9] = 0x08U;
+
+    bp_log("\r\n[8] ReadMemoryByAddress: read 8 bytes back @ 0x08015000\r\n");
+    bp_log_hex("   -> req", req, 10U);
+    if (!bp_cantp_send(CAN_CMD_ID, req, 10U)) { bp_log("   !! send failed\r\n"); bp_uds_report(9); }
+    if (!bp_cantp_recv(rd, &rlen, CAN_CMD_ID)) { bp_log("   !! no reply\r\n");    bp_uds_report(9); }
+    bp_log_hex("   <- rsp", rd, rlen);
+
+    if (rlen < 9U || rd[0] != 0x63U || memcmp(&rd[1], want, 8) != 0) bp_uds_report(9);
+    bp_log("    -> read-back matches the transferred bytes\r\n");
+  }
+
+  bp_uds_report(0);   /* full UDS reprogramming + verified read-back over real CAN */
 }
 #endif /* BP_UDS_CLIENT_ON_BOOT */
 /* USER CODE END 0 */
@@ -468,6 +530,27 @@ int main(void)
       bridge_bus = frame[2];
       uint8_t ack[3] = { 0xCDU, 0x01U, bridge_bus };
       HAL_UART_Transmit(&huart1, ack, 3U, HAL_MAX_DELAY);
+      continue;
+    }
+
+    /* 2a'. Raw ISO-TP passthrough (for a PC UDS client): the PC frames each
+       request as [LEN][UDS PDU]; we put the PDU straight on CAN and return the
+       raw reply as [RLEN][reply bytes] (RLEN = 0 on failure). No CRC/CMD. */
+    if (bridge_bus == BUS_CAN_RAW) {
+      CAN_RxHeaderTypeDef rx; uint8_t junk[8];
+      uint32_t rlen = 0U;
+      uint8_t  hdr;
+      while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) > 0U)   /* drain stale RX */
+        HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &rx, junk);
+      if (bp_cantp_send(CAN_CMD_ID, &frame[1], len) &&
+          bp_cantp_recv(reply, &rlen, CAN_CMD_ID)) {
+        hdr = (uint8_t)rlen;
+        HAL_UART_Transmit(&huart1, &hdr, 1U, HAL_MAX_DELAY);
+        HAL_UART_Transmit(&huart1, reply, (uint16_t)rlen, HAL_MAX_DELAY);
+      } else {
+        hdr = 0U;   /* failure */
+        HAL_UART_Transmit(&huart1, &hdr, 1U, HAL_MAX_DELAY);
+      }
       continue;
     }
 

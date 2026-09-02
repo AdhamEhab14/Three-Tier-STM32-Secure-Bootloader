@@ -17,4 +17,7 @@ int FlashIf_ErasePages(unsigned long start_addr, unsigned long num_pages);
 /* Program 'len' bytes at addr (packed into 16-bit writes). Returns 1 on success. */
 int FlashIf_Write(unsigned long addr, const unsigned char *data, unsigned long len);
 
+/* Read 'len' bytes from addr (flash is memory-mapped). Returns 1 on success. */
+int FlashIf_Read(unsigned long addr, unsigned char *data, unsigned long len);
+
 #endif /* FLASH_IF_H_ */

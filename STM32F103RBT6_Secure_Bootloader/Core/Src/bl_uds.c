@@ -249,6 +249,22 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
     case UDS_EVT_RequestTransferExit:
         return UDS_PositiveResponse;   /* nothing else to finalise here */
 
+    case UDS_EVT_ReadMemByAddr: {
+        /* Read-back of the staging slot, so a client can verify a download. */
+        UDSReadMemByAddrArgs_t *a = (UDSReadMemByAddrArgs_t *)arg;
+        uint32_t addr = (uint32_t)(uintptr_t)a->memAddr;
+        uint8_t  buf[BL_UDS_MAX_BLOCK];
+        if (addr < BL_UDS_DL_BASE ||
+            a->memSize == 0U ||
+            a->memSize > sizeof(buf) ||
+            (addr + a->memSize) > (BL_UDS_DL_BASE + BL_UDS_DL_SIZE)) {
+            return UDS_NRC_RequestOutOfRange;
+        }
+        FlashIf_Read(addr, buf, (unsigned long)a->memSize);
+        a->copy(srv, buf, (uint16_t)a->memSize);
+        return UDS_PositiveResponse;
+    }
+
     case UDS_EVT_EcuReset: {
         UDSECUResetArgs_t *a = (UDSECUResetArgs_t *)arg;
         a->powerDownTimeMillis = 20U;  /* reset shortly after the reply is sent */
@@ -436,7 +452,26 @@ int BL_UDS_SelfTest(void)
         goto done;
     }
 
-    rc = 0;   /* full unlock + erase + one download block + exit all succeeded */
+    /* 8) ReadMemoryByAddress: read the 8 bytes back and confirm they match.
+          [0x23][ALFID=0x44][addr:4][size:4] -> [0x63][8 data bytes] */
+    {
+        static const uint8_t want[8] = {
+            0xDEU, 0xADU, 0xBEU, 0xEFU, 0x11U, 0x22U, 0x33U, 0x44U
+        };
+        uint8_t rd[10] = {
+            0x23U, 0x44U,
+            (uint8_t)(BL_UDS_DL_BASE >> 24), (uint8_t)(BL_UDS_DL_BASE >> 16),
+            (uint8_t)(BL_UDS_DL_BASE >> 8),  (uint8_t)(BL_UDS_DL_BASE),
+            0x00U, 0x00U, 0x00U, 0x08U
+        };
+        n = bl_uds_tester_xfer(&tester, rd, sizeof(rd), resp, sizeof(resp));
+        if (n < 9U || resp[0] != 0x63U || memcmp(&resp[1], want, 8) != 0) {
+            rc = 9;   /* read-back did not match what was written */
+            goto done;
+        }
+    }
+
+    rc = 0;   /* full unlock + erase + download + exit + verified read-back */
 
 done:
     BL_ISOTP_SwDisarm();
