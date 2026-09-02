@@ -22,14 +22,20 @@ void BL_UDS_Init(void);
 void BL_UDS_Poll(void);
 
 /*
- * Software-loopback self-test: drives a UDS reprogramming-unlock sequence
- * (DiagnosticSessionControl -> programming session, then SecurityAccess
- * seed/key) through the real server and isotp-c, with frames carried in RAM
- * instead of on CAN. Returns 0 on pass, or a stage code:
+ * Software-loopback self-test: drives a full UDS reprogramming sequence through
+ * the real server and isotp-c, with frames carried in RAM instead of on CAN -
+ * programming session, SecurityAccess seed/key, erase routine, RequestDownload,
+ * one TransferData block, RequestTransferExit. (Flash writes go through the
+ * flash driver, which is stubbed in the host build.) Returns 0 on pass, or a
+ * stage code:
  *   1 = no response at all (transport / server stalled)
  *   2 = DiagnosticSessionControl not accepted
  *   3 = SecurityAccess seed not granted
  *   4 = SecurityAccess key rejected (not unlocked)
+ *   5 = erase routine (0x31) rejected
+ *   6 = RequestDownload (0x34) rejected
+ *   7 = TransferData (0x36) rejected
+ *   8 = RequestTransferExit (0x37) rejected
  */
 int BL_UDS_SelfTest(void);
 

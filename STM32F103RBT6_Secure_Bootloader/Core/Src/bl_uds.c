@@ -9,6 +9,8 @@
  */
 #include "bl_uds.h"
 #include "bl_isotp.h"   /* IsoTpLink, BL_ISOTP_* helpers + CAN IDs */
+#include "bootloader.h" /* SLOT_B_BASE, APP_MAX_SIZE - the flash map */
+#include "flash_if.h"   /* FlashIf_ErasePages / FlashIf_Write */
 #include "can.h"        /* hcan */
 #include "isotp.h"      /* isotp_send / isotp_receive / isotp_init_link */
 #include "iso14229.h"   /* UDS server + UDSTp transport interface */
@@ -129,6 +131,36 @@ static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
     }
 }
 
+/* ==========================================================================
+ *  Reprogramming services (0x31 erase, 0x34/0x36/0x37 download, 0x11 reset).
+ *
+ *  A new image is streamed into the A/B staging slot (Slot B); the existing
+ *  command layer still owns the Ed25519 verify + copy-into-Slot-A swap. These
+ *  services only run once security is unlocked in a programming session.
+ * ========================================================================== */
+#define BL_UDS_DL_BASE     SLOT_B_BASE     /* staging slot base (0x08015000) */
+#define BL_UDS_DL_SIZE     APP_MAX_SIZE    /* bytes the slot can hold         */
+#define BL_UDS_FLASH_PAGE  1024U           /* F103 page size                  */
+#define BL_UDS_MAX_BLOCK   256U            /* TransferData message cap (fits our buffers) */
+#define BL_UDS_RID_ERASE   0xFF00U         /* routineIdentifier: erase staging slot */
+
+static uint32_t g_dl_addr;   /* next flash write address during a download */
+
+/* True only after SecurityAccess unlocked level 1 in a programming session. */
+static int bl_uds_reprogramming_allowed(const UDSServer_t *srv)
+{
+    return (srv->securityLevel == BL_UDS_SEC_LEVEL) &&
+           (srv->sessionType == UDS_LEV_DS_PRGS);
+}
+
+/* Reset the MCU (target only; a no-op in the host self-test build). */
+static void bl_uds_system_reset(void)
+{
+#if defined(STM32F103xB)
+    NVIC_SystemReset();
+#endif
+}
+
 /* Server event handler. Return UDS_PositiveResponse to accept a request (the
    library builds the positive reply), or a negative response code to reject. */
 static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
@@ -172,10 +204,64 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         return UDS_PositiveResponse;   /* library records the unlocked level */
     }
 
+    case UDS_EVT_RoutineCtrl: {
+        UDSRoutineCtrlArgs_t *a = (UDSRoutineCtrlArgs_t *)arg;
+        if (!bl_uds_reprogramming_allowed(srv)) {
+            return UDS_NRC_SecurityAccessDenied;
+        }
+        if (a->id == BL_UDS_RID_ERASE && a->ctrlType == UDS_LEV_RCTP_STR) {
+            unsigned long pages = BL_UDS_DL_SIZE / BL_UDS_FLASH_PAGE;
+            if (FlashIf_ErasePages(BL_UDS_DL_BASE, pages) != 1) {
+                return UDS_NRC_GeneralProgrammingFailure;
+            }
+            return UDS_PositiveResponse;
+        }
+        return UDS_NRC_RequestOutOfRange;
+    }
+
+    case UDS_EVT_RequestDownload: {
+        UDSRequestDownloadArgs_t *a = (UDSRequestDownloadArgs_t *)arg;
+        uint32_t addr = (uint32_t)(uintptr_t)a->addr;
+        if (!bl_uds_reprogramming_allowed(srv)) {
+            return UDS_NRC_SecurityAccessDenied;
+        }
+        /* The image may only land inside the staging slot. */
+        if (addr < BL_UDS_DL_BASE ||
+            a->size == 0U ||
+            a->size > BL_UDS_DL_SIZE ||
+            (addr + a->size) > (BL_UDS_DL_BASE + BL_UDS_DL_SIZE)) {
+            return UDS_NRC_RequestOutOfRange;
+        }
+        g_dl_addr = addr;
+        a->maxNumberOfBlockLength = BL_UDS_MAX_BLOCK;   /* keep blocks inside our buffers */
+        return UDS_PositiveResponse;
+    }
+
+    case UDS_EVT_TransferData: {
+        UDSTransferDataArgs_t *a = (UDSTransferDataArgs_t *)arg;
+        if (FlashIf_Write(g_dl_addr, a->data, a->len) != 1) {
+            return UDS_NRC_GeneralProgrammingFailure;
+        }
+        g_dl_addr += a->len;
+        return UDS_PositiveResponse;
+    }
+
+    case UDS_EVT_RequestTransferExit:
+        return UDS_PositiveResponse;   /* nothing else to finalise here */
+
+    case UDS_EVT_EcuReset: {
+        UDSECUResetArgs_t *a = (UDSECUResetArgs_t *)arg;
+        a->powerDownTimeMillis = 20U;  /* reset shortly after the reply is sent */
+        return UDS_PositiveResponse;
+    }
+
+    case UDS_EVT_DoScheduledReset:
+        bl_uds_system_reset();
+        return UDS_PositiveResponse;
+
     /* Housekeeping notifications - no request to answer. */
     case UDS_EVT_Err:
     case UDS_EVT_SessionTimeout:
-    case UDS_EVT_DoScheduledReset:
         return UDS_PositiveResponse;
 
     /* Services not implemented in this build yet. */
@@ -304,7 +390,53 @@ int BL_UDS_SelfTest(void)
         goto done;
     }
 
-    rc = 0;   /* programming session entered and security unlocked */
+    /* 4) RoutineControl start -> erase the staging slot (routineId 0xFF00). */
+    req[0] = 0x31U;
+    req[1] = UDS_LEV_RCTP_STR;
+    req[2] = (uint8_t)(BL_UDS_RID_ERASE >> 8);
+    req[3] = (uint8_t)(BL_UDS_RID_ERASE);
+    n = bl_uds_tester_xfer(&tester, req, 4U, resp, sizeof(resp));
+    if (n < 2U || resp[0] != 0x71U || resp[1] != UDS_LEV_RCTP_STR) {
+        rc = 5;   /* erase routine rejected */
+        goto done;
+    }
+
+    /* 5) RequestDownload: 8 bytes to the staging slot base.
+          [0x34][dfi=0][ALFID=0x44][addr:4 BE][size:4 BE] */
+    {
+        uint8_t dl[11] = {
+            0x34U, 0x00U, 0x44U,
+            (uint8_t)(BL_UDS_DL_BASE >> 24), (uint8_t)(BL_UDS_DL_BASE >> 16),
+            (uint8_t)(BL_UDS_DL_BASE >> 8),  (uint8_t)(BL_UDS_DL_BASE),
+            0x00U, 0x00U, 0x00U, 0x08U        /* size = 8 */
+        };
+        n = bl_uds_tester_xfer(&tester, dl, sizeof(dl), resp, sizeof(resp));
+    }
+    if (n < 1U || resp[0] != 0x74U) {
+        rc = 6;   /* request download rejected */
+        goto done;
+    }
+
+    /* 6) TransferData block #1: [0x36][BSC=1][8 payload bytes]. */
+    {
+        uint8_t td[10] = { 0x36U, 0x01U,
+                           0xDEU, 0xADU, 0xBEU, 0xEFU, 0x11U, 0x22U, 0x33U, 0x44U };
+        n = bl_uds_tester_xfer(&tester, td, sizeof(td), resp, sizeof(resp));
+    }
+    if (n < 2U || resp[0] != 0x76U || resp[1] != 0x01U) {
+        rc = 7;   /* transfer data rejected */
+        goto done;
+    }
+
+    /* 7) RequestTransferExit: [0x37]. */
+    req[0] = 0x37U;
+    n = bl_uds_tester_xfer(&tester, req, 1U, resp, sizeof(resp));
+    if (n < 1U || resp[0] != 0x77U) {
+        rc = 8;   /* transfer exit rejected */
+        goto done;
+    }
+
+    rc = 0;   /* full unlock + erase + one download block + exit all succeeded */
 
 done:
     BL_ISOTP_SwDisarm();
