@@ -1,0 +1,6 @@
+# Generated report, captures, and Python caches - not source.
+report.html
+uds_trace.log
+uds_trace.csv
+__pycache__/
+.pytest_cache/

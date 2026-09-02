@@ -1,0 +1,637 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SecureBootloader.odx-d  -  ISO 22901-1 (ODX) diagnostic description
+  ECU: STM32F103RBT6 three-tier secure bootloader, standards UDS server (iso14229).
+  Author: Adham Ehab
+  Hand-authored to mirror the services actually implemented in
+  STM32F103RBT6_Secure_Bootloader/Core/Src/bl_uds.c. See diagnostics/README.md.
+  Model version 2.2.0. Validate/open with odxtools or an ODX-aware tool.
+
+  Note on DIAG-CODED-TYPE: ODX makes this element abstract, so every one carries an
+  xsi:type - STANDARD-LENGTH-TYPE for the fixed-width fields, MIN-MAX-LENGTH-TYPE for
+  the variable-length firmware/data blocks.
+-->
+<ODX MODEL-VERSION="2.2.0"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:noNamespaceSchemaLocation="odx.xsd">
+  <DIAG-LAYER-CONTAINER ID="DLC_SecureBL">
+    <SHORT-NAME>SecureBootloader_DLC</SHORT-NAME>
+    <LONG-NAME>STM32F103 Secure Bootloader diagnostic layers</LONG-NAME>
+
+    <ECU-VARIANTS>
+      <ECU-VARIANT ID="EV_SecureBL">
+        <SHORT-NAME>STM32F103_Secure_Bootloader</SHORT-NAME>
+        <LONG-NAME>STM32F103RBT6 Secure Bootloader (UDS server)</LONG-NAME>
+        <DESC><![CDATA[ISO 14229-1 UDS server on ISO 15765-2, request 0x7E0 / response 0x7E8.]]></DESC>
+
+        <!-- ============================ DATA DICTIONARY ============================ -->
+        <DIAG-DATA-DICTIONARY-SPEC>
+          <DATA-OBJECT-PROPS>
+
+            <DATA-OBJECT-PROP ID="DOP_U8">
+              <SHORT-NAME>uint8</SHORT-NAME>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_UINT32"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_U16">
+              <SHORT-NAME>uint16</SHORT-NAME>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_UINT32"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_U32">
+              <SHORT-NAME>uint32</SHORT-NAME>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_UINT32"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_SEED4">
+              <SHORT-NAME>seed_4bytes</SHORT-NAME>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_BYTEFIELD" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_BYTEFIELD"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_KEY4">
+              <SHORT-NAME>key_4bytes</SHORT-NAME>
+              <DESC><![CDATA[key[i] = seed[i] XOR {0x19,0x84,0xC0,0xDE}]]></DESC>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_BYTEFIELD" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_BYTEFIELD"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_CRC32">
+              <SHORT-NAME>crc32</SHORT-NAME>
+              <DESC><![CDATA[reflected CRC-32, poly 0xEDB88320, init 0xFFFFFFFF, final XOR]]></DESC>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_UINT32"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <DATA-OBJECT-PROP ID="DOP_DATA">
+              <SHORT-NAME>data_block</SHORT-NAME>
+              <DESC><![CDATA[variable-length block, up to maxNumberOfBlockLength=128, runs to end of PDU]]></DESC>
+              <DIAG-CODED-TYPE xsi:type="MIN-MAX-LENGTH-TYPE" BASE-DATA-TYPE="A_BYTEFIELD" BASE-TYPE-ENCODING="NONE" TERMINATION="END-OF-PDU"><MIN-LENGTH>1</MIN-LENGTH><MAX-LENGTH>128</MAX-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_BYTEFIELD"/>
+              <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+            <!-- NRC value table: exactly the codes bl_uds.c and the iso14229 library return. -->
+            <DATA-OBJECT-PROP ID="DOP_NRC">
+              <SHORT-NAME>negativeResponseCode</SHORT-NAME>
+              <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              <PHYSICAL-TYPE BASE-DATA-TYPE="A_UNICODE2STRING"/>
+              <COMPU-METHOD>
+                <CATEGORY>TEXTTABLE</CATEGORY>
+                <COMPU-INTERNAL-TO-PHYS>
+                  <COMPU-SCALES>
+                    <COMPU-SCALE><LOWER-LIMIT>17</LOWER-LIMIT><UPPER-LIMIT>17</UPPER-LIMIT><COMPU-CONST><VT>serviceNotSupported</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>18</LOWER-LIMIT><UPPER-LIMIT>18</UPPER-LIMIT><COMPU-CONST><VT>subFunctionNotSupported</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>19</LOWER-LIMIT><UPPER-LIMIT>19</UPPER-LIMIT><COMPU-CONST><VT>incorrectMessageLengthOrInvalidFormat</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>49</LOWER-LIMIT><UPPER-LIMIT>49</UPPER-LIMIT><COMPU-CONST><VT>requestOutOfRange</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>51</LOWER-LIMIT><UPPER-LIMIT>51</UPPER-LIMIT><COMPU-CONST><VT>securityAccessDenied</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>53</LOWER-LIMIT><UPPER-LIMIT>53</UPPER-LIMIT><COMPU-CONST><VT>invalidKey</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>54</LOWER-LIMIT><UPPER-LIMIT>54</UPPER-LIMIT><COMPU-CONST><VT>exceededNumberOfAttempts</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>55</LOWER-LIMIT><UPPER-LIMIT>55</UPPER-LIMIT><COMPU-CONST><VT>requiredTimeDelayNotExpired</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>114</LOWER-LIMIT><UPPER-LIMIT>114</UPPER-LIMIT><COMPU-CONST><VT>generalProgrammingFailure</VT></COMPU-CONST></COMPU-SCALE>
+                  </COMPU-SCALES>
+                </COMPU-INTERNAL-TO-PHYS>
+              </COMPU-METHOD>
+            </DATA-OBJECT-PROP>
+
+          </DATA-OBJECT-PROPS>
+        </DIAG-DATA-DICTIONARY-SPEC>
+
+        <!-- ============================ DIAG SERVICES ============================ -->
+        <DIAG-COMMS>
+
+          <DIAG-SERVICE ID="DS_DSC" SEMANTIC="SESSION">
+            <SHORT-NAME>DiagnosticSessionControl</SHORT-NAME>
+            <LONG-NAME>DiagnosticSessionControl (0x10)</LONG-NAME>
+            <DESC><![CDATA[sub 0x01 default, 0x02 programming, 0x03 extended. bl_uds.c UDS_EVT_DiagSessCtrl.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_DSC"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_DSC"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_SA_SEED" SEMANTIC="SECURITY">
+            <SHORT-NAME>SecurityAccess_RequestSeed</SHORT-NAME>
+            <LONG-NAME>SecurityAccess requestSeed (0x27 0x01)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_SA_SEED"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_SA_SEED"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_SA_KEY" SEMANTIC="SECURITY">
+            <SHORT-NAME>SecurityAccess_SendKey</SHORT-NAME>
+            <LONG-NAME>SecurityAccess sendKey (0x27 0x02)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_SA_KEY"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_SA_KEY"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_RC_ERASE" SEMANTIC="ROUTINE">
+            <SHORT-NAME>RoutineControl_EraseStaging</SHORT-NAME>
+            <LONG-NAME>RoutineControl start EraseMemory (0x31 0x01 0xFF00)</LONG-NAME>
+            <DESC><![CDATA[erases the A/B staging slot (Slot B). Requires prog session + unlocked.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RC_ERASE"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RC_ERASE"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_RC_CHECK" SEMANTIC="ROUTINE">
+            <SHORT-NAME>RoutineControl_CheckMemory</SHORT-NAME>
+            <LONG-NAME>RoutineControl start CheckMemory (0x31 0x01 0xFF01)</LONG-NAME>
+            <DESC><![CDATA[optionRecord=[addr:4][size:4]; returns CRC-32 of the region.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RC_CHECK"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RC_CHECK"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_RD" SEMANTIC="UPLOAD_DOWNLOAD">
+            <SHORT-NAME>RequestDownload</SHORT-NAME>
+            <LONG-NAME>RequestDownload (0x34)</LONG-NAME>
+            <DESC><![CDATA[dataFormatId=0x00, ALFID=0x44, addr[4]+size[4] into staging slot.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RD"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RD"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_TD" SEMANTIC="UPLOAD_DOWNLOAD">
+            <SHORT-NAME>TransferData</SHORT-NAME>
+            <LONG-NAME>TransferData (0x36)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_TD"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_TD"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_TX_EXIT" SEMANTIC="UPLOAD_DOWNLOAD">
+            <SHORT-NAME>RequestTransferExit</SHORT-NAME>
+            <LONG-NAME>RequestTransferExit (0x37)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_TX_EXIT"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_TX_EXIT"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_RMBA" SEMANTIC="READDATA">
+            <SHORT-NAME>ReadMemoryByAddress</SHORT-NAME>
+            <LONG-NAME>ReadMemoryByAddress (0x23)</LONG-NAME>
+            <DESC><![CDATA[ALFID=0x44, addr[4]+size[4]; read-back of staging slot for verification.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RMBA"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RMBA"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_ECURESET" SEMANTIC="RESET">
+            <SHORT-NAME>ECUReset</SHORT-NAME>
+            <LONG-NAME>ECUReset (0x11)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_ECURESET"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_ECURESET"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_COMMCTRL" SEMANTIC="FUNCTION">
+            <SHORT-NAME>CommunicationControl</SHORT-NAME>
+            <LONG-NAME>CommunicationControl (0x28)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_COMMCTRL"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_COMMCTRL"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_DTCSET" SEMANTIC="FUNCTION">
+            <SHORT-NAME>ControlDTCSetting</SHORT-NAME>
+            <LONG-NAME>ControlDTCSetting (0x85)</LONG-NAME>
+            <REQUEST-REF ID-REF="REQ_DTCSET"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_DTCSET"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+        </DIAG-COMMS>
+
+        <!-- ============================ REQUESTS ============================ -->
+        <REQUESTS>
+
+          <REQUEST ID="REQ_DSC">
+            <SHORT-NAME>RQ_DiagnosticSessionControl</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>16</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>sessionType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_SA_SEED">
+            <SHORT-NAME>RQ_SecurityAccess_RequestSeed</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>39</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>level_requestSeed</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_SA_KEY">
+            <SHORT-NAME>RQ_SecurityAccess_SendKey</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>39</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>level_sendKey</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>2</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>key</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_KEY4"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_RC_ERASE">
+            <SHORT-NAME>RQ_RoutineControl_Erase</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>49</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineControlType_start</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineId_eraseStaging</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><CODED-VALUE>65280</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_RC_CHECK">
+            <SHORT-NAME>RQ_RoutineControl_CheckMemory</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>49</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineControlType_start</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineId_checkMemory</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><CODED-VALUE>65281</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memoryAddress</SHORT-NAME><BYTE-POSITION>4</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memorySize</SHORT-NAME><BYTE-POSITION>8</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_RD">
+            <SHORT-NAME>RQ_RequestDownload</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>52</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="CODED-CONST">
+                <SHORT-NAME>dataFormatIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>0</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="CODED-CONST">
+                <SHORT-NAME>addressAndLengthFormatIdentifier</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><CODED-VALUE>68</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memoryAddress</SHORT-NAME><BYTE-POSITION>3</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memorySize</SHORT-NAME><BYTE-POSITION>7</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_TD">
+            <SHORT-NAME>RQ_TransferData</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>54</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>blockSequenceCounter</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>transferRequestParameterRecord</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_DATA"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_TX_EXIT">
+            <SHORT-NAME>RQ_RequestTransferExit</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>55</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_RMBA">
+            <SHORT-NAME>RQ_ReadMemoryByAddress</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>35</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="CODED-CONST">
+                <SHORT-NAME>addressAndLengthFormatIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>68</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memoryAddress</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>memorySize</SHORT-NAME><BYTE-POSITION>6</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_ECURESET">
+            <SHORT-NAME>RQ_ECUReset</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>17</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>resetType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_COMMCTRL">
+            <SHORT-NAME>RQ_CommunicationControl</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>40</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>controlType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>communicationType</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_DTCSET">
+            <SHORT-NAME>RQ_ControlDTCSetting</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>133</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>dtcSettingType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+        </REQUESTS>
+
+        <!-- ============================ POSITIVE RESPONSES ============================ -->
+        <POS-RESPONSES>
+
+          <POS-RESPONSE ID="PR_DSC">
+            <SHORT-NAME>PR_DiagnosticSessionControl</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>80</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>sessionType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>sessionParameterRecord</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_SA_SEED">
+            <SHORT-NAME>PR_SecurityAccess_Seed</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>103</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>level</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>seed</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_SEED4"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_SA_KEY">
+            <SHORT-NAME>PR_SecurityAccess_KeyAccepted</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>103</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>level</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>2</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RC_ERASE">
+            <SHORT-NAME>PR_RoutineControl_Erase</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>113</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineControlType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineId</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><CODED-VALUE>65280</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RC_CHECK">
+            <SHORT-NAME>PR_RoutineControl_CheckMemory</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>113</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineControlType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>1</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>routineId</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><CODED-VALUE>65281</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>routineStatusRecord_crc32</SHORT-NAME><BYTE-POSITION>4</BYTE-POSITION><DOP-REF ID-REF="DOP_CRC32"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RD">
+            <SHORT-NAME>PR_RequestDownload</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>116</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="CODED-CONST">
+                <SHORT-NAME>lengthFormatIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>32</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>maxNumberOfBlockLength</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_U16"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_TD">
+            <SHORT-NAME>PR_TransferData</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>118</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>blockSequenceCounter</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_TX_EXIT">
+            <SHORT-NAME>PR_RequestTransferExit</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>119</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RMBA">
+            <SHORT-NAME>PR_ReadMemoryByAddress</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>99</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>dataRecord</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_DATA"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_ECURESET">
+            <SHORT-NAME>PR_ECUReset</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>81</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>resetType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_COMMCTRL">
+            <SHORT-NAME>PR_CommunicationControl</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>104</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>controlType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_DTCSET">
+            <SHORT-NAME>PR_ControlDTCSetting</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>197</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>dtcSettingType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+        </POS-RESPONSES>
+
+        <!-- ============================ NEGATIVE RESPONSES ============================ -->
+        <NEG-RESPONSES>
+          <NEG-RESPONSE ID="NR_GLOBAL">
+            <SHORT-NAME>NR_Global</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>negativeResponseSID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>127</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>requestServiceId</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>NRC</SHORT-NAME><BYTE-POSITION>2</BYTE-POSITION><DOP-REF ID-REF="DOP_NRC"/>
+              </PARAM>
+            </PARAMS>
+          </NEG-RESPONSE>
+        </NEG-RESPONSES>
+
+        <!--
+          Physical addressing for this server, as configured in bl_uds.c / bl_isotp.c:
+            request  CAN ID : 0x7E0  (BL_ISOTP_ID_CMD)
+            response CAN ID : 0x7E8  (BL_ISOTP_ID_REPLY)
+            transport       : ISO 15765-2, single physical channel
+            bus             : CAN, 250 kbit/s
+            P2 server max   : 50 ms (iso14229 default)
+
+          In a full ODX delivery these belong in a COMPARAM-REF block resolved against the
+          ISO 15765-3 / 11898-2 COMPARAM-SPEC catalog. That catalog is not shipped with this
+          single-file description, so the values are recorded here rather than as references
+          that would not resolve. Add the COMPARAM-SPEC when packaging a complete PDX.
+        -->
+
+      </ECU-VARIANT>
+    </ECU-VARIANTS>
+  </DIAG-LAYER-CONTAINER>
+</ODX>

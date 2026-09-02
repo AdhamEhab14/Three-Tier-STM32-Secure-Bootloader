@@ -1,5 +1,6 @@
 # STM32F103 Secure Bootloader
 
+[![CI](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/actions/workflows/ci.yml/badge.svg)](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-STM32F103RB-03234b)
 ![Language](https://img.shields.io/badge/language-C%20%7C%20Python-orange)

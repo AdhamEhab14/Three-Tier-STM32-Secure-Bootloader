@@ -1,0 +1,281 @@
+/*@!Encoding:1252*/
+/*
+ * UdsTester.can  -  CAPL diagnostic tester for the STM32F103 secure bootloader.
+ * Author: Adham Ehab
+ *
+ * Runs as a node in CANoe or CANalyzer on the diagnostic bus. Press 'r' and it
+ * drives the full UDS reprogramming sequence against the bootloader's iso14229
+ * server exactly as host/uds_client.py does over real CAN:
+ *
+ *   session -> seed/key -> erase -> RequestDownload -> TransferData
+ *           -> RequestTransferExit -> ReadMemoryByAddress (read-back)
+ *           -> RoutineControl CheckMemory (CRC-32)
+ *
+ * Requests go out on 0x7E0, replies come back on 0x7E8. Most PDUs here are
+ * longer than a single CAN frame, so the node carries its own small ISO-TP
+ * (ISO 15765-2): single frame when it fits, first frame + consecutive frames
+ * when it doesn't, and the matching flow-control handshake either way. That is
+ * deliberately the same segmentation the firmware's can_bl.c implements, kept
+ * minimal (block size 0, no STmin) because a bench tester never needs more.
+ */
+
+variables
+{
+  const dword REQ_ID  = 0x7E0;   // tester -> ECU
+  const dword RESP_ID = 0x7E8;   // ECU -> tester
+
+  // Shared secret behind SecurityAccess: key[i] = seed[i] XOR SECRET[i].
+  const byte  SECRET[4]     = {0x19, 0x84, 0xC0, 0xDE};
+  const dword STAGING_BASE  = 0x08015000;   // SLOT_B_BASE, the download window
+
+  // The 8 bytes we program and then read back to prove the round trip.
+  const byte  PAYLOAD[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44};
+
+  message 0x7E0 gReq;    // reused for every outgoing frame (request + our FC)
+
+  // Where we are in the sequence == the reply we are currently waiting for.
+  enum SeqState {
+    S_IDLE, S_DSC, S_SEED, S_KEY, S_ERASE, S_RD, S_TD, S_EXIT, S_READ, S_CHECK
+  };
+  enum SeqState gState = S_IDLE;
+
+  byte  gSeed[4];
+
+  // ISO-TP transmit side: remainder of a multi-frame request, sent on flow control.
+  byte  gTxBuf[64];
+  dword gTxLen, gTxIdx;
+  byte  gTxSn;
+
+  // ISO-TP receive side: reassembly of a multi-frame reply.
+  byte  gRxBuf[64];
+  dword gRxLen, gRxIdx;
+}
+
+// ---- small helpers ---------------------------------------------------------
+
+void putU32be(byte buf[], dword at, dword v)
+{
+  buf[at]   = (v >> 24) & 0xFF;
+  buf[at+1] = (v >> 16) & 0xFF;
+  buf[at+2] = (v >> 8)  & 0xFF;
+  buf[at+3] =  v        & 0xFF;
+}
+
+// Reflected CRC-32 (poly 0xEDB88320) - the same one RoutineControl CheckMemory
+// returns, so we can check the server's result against our own.
+dword crc32(byte data[], dword len)
+{
+  dword crc, i;
+  int   k;
+  crc = 0xFFFFFFFF;
+  for (i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (k = 0; k < 8; k++)
+      crc = (crc & 1) ? ((crc >> 1) ^ 0xEDB88320) : (crc >> 1);
+  }
+  return crc ^ 0xFFFFFFFF;
+}
+
+// ---- ISO-TP transmit -------------------------------------------------------
+
+void isotpSend(byte data[], dword len)
+{
+  dword i;
+
+  for (i = 0; i < 8; i++) gReq.byte(i) = 0;
+  gReq.dlc = 8;
+
+  if (len <= 7) {                       // single frame
+    gReq.byte(0) = len;                 // PCI: type 0, length in low nibble
+    for (i = 0; i < len; i++) gReq.byte(1 + i) = data[i];
+    output(gReq);
+    return;
+  }
+
+  // First frame: 12-bit length, first 6 payload bytes.
+  gReq.byte(0) = 0x10 | ((len >> 8) & 0x0F);
+  gReq.byte(1) = len & 0xFF;
+  for (i = 0; i < 6; i++) gReq.byte(2 + i) = data[i];
+  output(gReq);
+
+  // Park the rest; the consecutive frames go out when the ECU's flow control
+  // arrives (see the FC branch in on message).
+  for (i = 0; i < len; i++) gTxBuf[i] = data[i];
+  gTxLen = len;
+  gTxIdx = 6;
+  gTxSn  = 1;
+}
+
+void sendConsecutiveFrames()
+{
+  dword i, n;
+
+  while (gTxIdx < gTxLen) {
+    for (i = 0; i < 8; i++) gReq.byte(i) = 0;
+    gReq.dlc = 8;
+    gReq.byte(0) = 0x20 | (gTxSn & 0x0F);
+    n = (gTxLen - gTxIdx > 7) ? 7 : (gTxLen - gTxIdx);
+    for (i = 0; i < n; i++) gReq.byte(1 + i) = gTxBuf[gTxIdx + i];
+    output(gReq);
+    gTxIdx += n;
+    gTxSn++;
+  }
+}
+
+// Flow control we send when the ECU's reply is itself multi-frame: clear to
+// send, block size 0 (all at once), STmin 0.
+void sendFlowControl()
+{
+  dword i;
+  for (i = 0; i < 8; i++) gReq.byte(i) = 0;
+  gReq.dlc = 8;
+  gReq.byte(0) = 0x30;
+  output(gReq);
+}
+
+// ---- sequence driver -------------------------------------------------------
+
+// Fail loudly and stop the run; a bench tester should never plough on after a
+// wrong reply.
+void seqFail(char step[], byte data[], dword len)
+{
+  dword i;
+  write("  FAIL at %s - reply:", step);
+  for (i = 0; i < len; i++) write("    [%d] 0x%02X", i, data[i]);
+  gState = S_IDLE;
+}
+
+void handleReply(byte data[], dword len)
+{
+  byte req[16];
+  byte key[4];
+  dword crc, got;
+  int   i;
+
+  switch (gState) {
+
+  case S_DSC:
+    if (len < 2 || data[0] != 0x50 || data[1] != 0x02) { seqFail("SessionControl", data, len); return; }
+    write("  ok  programming session");
+    gState = S_SEED;
+    req[0] = 0x27; req[1] = 0x01;
+    isotpSend(req, 2);
+    break;
+
+  case S_SEED:
+    if (len < 6 || data[0] != 0x67 || data[1] != 0x01) { seqFail("requestSeed", data, len); return; }
+    for (i = 0; i < 4; i++) { gSeed[i] = data[2 + i]; key[i] = gSeed[i] ^ SECRET[i]; }
+    write("  ok  seed %02X %02X %02X %02X", gSeed[0], gSeed[1], gSeed[2], gSeed[3]);
+    gState = S_KEY;
+    req[0] = 0x27; req[1] = 0x02;
+    for (i = 0; i < 4; i++) req[2 + i] = key[i];
+    isotpSend(req, 6);
+    break;
+
+  case S_KEY:
+    if (len < 2 || data[0] != 0x67 || data[1] != 0x02) { seqFail("sendKey", data, len); return; }
+    write("  ok  security unlocked");
+    gState = S_ERASE;
+    req[0] = 0x31; req[1] = 0x01; req[2] = 0xFF; req[3] = 0x00;
+    isotpSend(req, 4);
+    break;
+
+  case S_ERASE:
+    if (len < 4 || data[0] != 0x71 || data[2] != 0xFF || data[3] != 0x00) { seqFail("erase", data, len); return; }
+    write("  ok  staging slot erased");
+    gState = S_RD;
+    req[0] = 0x34; req[1] = 0x00; req[2] = 0x44;
+    putU32be(req, 3, STAGING_BASE);
+    putU32be(req, 7, 8);
+    isotpSend(req, 11);
+    break;
+
+  case S_RD:
+    if (len < 1 || data[0] != 0x74) { seqFail("RequestDownload", data, len); return; }
+    write("  ok  download accepted (maxBlockLen advertised)");
+    gState = S_TD;
+    req[0] = 0x36; req[1] = 0x01;
+    for (i = 0; i < 8; i++) req[2 + i] = PAYLOAD[i];
+    isotpSend(req, 10);
+    break;
+
+  case S_TD:
+    if (len < 2 || data[0] != 0x76 || data[1] != 0x01) { seqFail("TransferData", data, len); return; }
+    write("  ok  block transferred");
+    gState = S_EXIT;
+    req[0] = 0x37;
+    isotpSend(req, 1);
+    break;
+
+  case S_EXIT:
+    if (len < 1 || data[0] != 0x77) { seqFail("TransferExit", data, len); return; }
+    write("  ok  transfer closed");
+    gState = S_READ;
+    req[0] = 0x23; req[1] = 0x44;
+    putU32be(req, 2, STAGING_BASE);
+    putU32be(req, 6, 8);
+    isotpSend(req, 10);
+    break;
+
+  case S_READ:
+    if (len < 9 || data[0] != 0x63) { seqFail("ReadMemoryByAddress", data, len); return; }
+    for (i = 0; i < 8; i++)
+      if (data[1 + i] != PAYLOAD[i]) { seqFail("read-back mismatch", data, len); return; }
+    write("  ok  read-back matches the bytes written");
+    gState = S_CHECK;
+    req[0] = 0x31; req[1] = 0x01; req[2] = 0xFF; req[3] = 0x01;
+    putU32be(req, 4, STAGING_BASE);
+    putU32be(req, 8, 8);
+    isotpSend(req, 12);
+    break;
+
+  case S_CHECK:
+    if (len < 8 || data[0] != 0x71 || data[2] != 0xFF || data[3] != 0x01) { seqFail("CheckMemory", data, len); return; }
+    crc = crc32(PAYLOAD, 8);
+    got = ((dword)data[4] << 24) | ((dword)data[5] << 16) | ((dword)data[6] << 8) | data[7];
+    if (got != crc) { seqFail("CheckMemory CRC mismatch", data, len); return; }
+    write("  ok  CheckMemory CRC 0x%08X matches", crc);
+    write("==== PASS: full UDS reprogramming sequence verified ====");
+    gState = S_IDLE;
+    break;
+  }
+}
+
+// ---- events ----------------------------------------------------------------
+
+on key 'r'
+{
+  byte req[2];
+  write("==== UDS tester: starting reprogramming sequence ====");
+  gState = S_DSC;
+  req[0] = 0x10; req[1] = 0x02;          // DiagnosticSessionControl -> programming
+  isotpSend(req, 2);
+}
+
+on message RESP_ID
+{
+  byte pci, n, i;
+
+  pci = this.byte(0) & 0xF0;
+
+  if (pci == 0x00) {                      // single frame
+    gRxLen = this.byte(0) & 0x0F;
+    for (i = 0; i < gRxLen; i++) gRxBuf[i] = this.byte(1 + i);
+    handleReply(gRxBuf, gRxLen);
+  }
+  else if (pci == 0x10) {                 // first frame
+    gRxLen = ((this.byte(0) & 0x0F) << 8) | this.byte(1);
+    for (i = 0; i < 6; i++) gRxBuf[i] = this.byte(2 + i);
+    gRxIdx = 6;
+    sendFlowControl();
+  }
+  else if (pci == 0x20) {                 // consecutive frame
+    n = (gRxLen - gRxIdx > 7) ? 7 : (gRxLen - gRxIdx);
+    for (i = 0; i < n; i++) gRxBuf[gRxIdx + i] = this.byte(1 + i);
+    gRxIdx += n;
+    if (gRxIdx >= gRxLen) handleReply(gRxBuf, gRxLen);
+  }
+  else if (pci == 0x30) {                 // flow control for a request we sent
+    sendConsecutiveFrames();
+  }
+}
