@@ -34,6 +34,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -271,21 +272,50 @@ static int forward_i2c(const uint8_t *cmd, uint32_t total, uint8_t *reply, uint3
 #define BP_LED_ON()   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET)
 #define BP_LED_OFF()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET)
 
-/* Send a UDS request and read the single-frame reply. Returns reply length,
-   or 0 on failure. */
-static uint32_t bp_uds_xfer(const uint8_t *req, uint32_t req_len,
+/* Print a line to the PC over USART1 (the same USB-serial the bridge uses). */
+static void bp_log(const char *s)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)strlen(s), 500U);
+}
+
+/* Print "label" followed by n bytes as hex. */
+static void bp_log_hex(const char *label, const uint8_t *d, uint32_t n)
+{
+  char line[96];
+  int  p = snprintf(line, sizeof(line), "%s", label);
+  for (uint32_t i = 0U; (i < n) && (p < (int)sizeof(line) - 4); i++)
+    p += snprintf(line + p, sizeof(line) - (size_t)p, " %02X", d[i]);
+  p += snprintf(line + p, sizeof(line) - (size_t)p, "\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t *)line, (uint16_t)p, 500U);
+}
+
+/* Send a UDS request, log it and the reply. Returns reply length, 0 on failure. */
+static uint32_t bp_uds_xfer(const char *step, const uint8_t *req, uint32_t req_len,
                             uint8_t *resp, uint32_t timeout_ms)
 {
   uint32_t rlen = 0U;
-  if (!bp_cantp_send(CAN_CMD_ID, req, req_len)) return 0U;
-  if (!bp_cantp_recv_sf(resp, &rlen, timeout_ms)) return 0U;
+  bp_log(step);
+  bp_log_hex("   -> req", req, req_len);
+  if (!bp_cantp_send(CAN_CMD_ID, req, req_len)) { bp_log("   !! send failed\r\n"); return 0U; }
+  if (!bp_cantp_recv_sf(resp, &rlen, timeout_ms)) { bp_log("   !! no reply\r\n"); return 0U; }
+  bp_log_hex("   <- rsp", resp, rlen);
   return rlen;
 }
 
-/* Show a result code on the LED and halt (0 = solid ON = pass). */
+/* Show a result on the LED (0 = solid ON = pass) and over UART, then halt. */
 static void bp_uds_report(int code)
 {
-  if (code == 0) { BP_LED_ON(); while (1) { } }
+  if (code == 0)
+  {
+    bp_log("\r\n==== RESULT: PASS (full UDS reprogramming over real CAN) ====\r\n");
+    BP_LED_ON();
+    while (1) { }
+  }
+  {
+    char line[52];
+    snprintf(line, sizeof(line), "\r\n==== RESULT: FAIL at stage %d ====\r\n", code);
+    bp_log(line);
+  }
   while (1)
   {
     for (int b = 0; b < code; b++) { BP_LED_ON(); HAL_Delay(250); BP_LED_OFF(); HAL_Delay(250); }
@@ -305,31 +335,37 @@ static void bp_uds_client(void)
   int      i;
 
   HAL_Delay(300);   /* let the server settle after power-up */
+  bp_log("\r\n=== UDS client: driving the Nucleo iso14229 server over CAN ===\r\n");
+  bp_log("    requests on 0x7E0, single-frame replies on 0x7E8\r\n");
 
   /* 1) DiagnosticSessionControl -> programming session. */
   req[0] = 0x10U; req[1] = 0x02U;
-  n = bp_uds_xfer(req, 2U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[1] DiagnosticSessionControl (programming)", req, 2U, resp, 2000U);
   if (n < 2U || resp[0] != 0x50U || resp[1] != 0x02U) bp_uds_report(2);
 
   /* Wait out the server's ~1 s SecurityAccess boot delay. */
+  bp_log("    waiting out the ~1 s security boot delay...\r\n");
   HAL_Delay(1200);
 
   /* 2) SecurityAccess requestSeed. */
   req[0] = 0x27U; req[1] = 0x01U;
-  n = bp_uds_xfer(req, 2U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[2] SecurityAccess requestSeed", req, 2U, resp, 2000U);
   if (n < 6U || resp[0] != 0x67U || resp[1] != 0x01U) bp_uds_report(3);
   seed[0] = resp[2]; seed[1] = resp[3]; seed[2] = resp[4]; seed[3] = resp[5];
 
   /* 3) SecurityAccess sendKey (key = seed XOR shared secret). */
   for (i = 0; i < 4; i++) key[i] = (uint8_t)(seed[i] ^ secret[i]);
+  bp_log_hex("    seed from server", seed, 4U);
+  bp_log_hex("    computed key    ", key, 4U);
   req[0] = 0x27U; req[1] = 0x02U;
   req[2] = key[0]; req[3] = key[1]; req[4] = key[2]; req[5] = key[3];
-  n = bp_uds_xfer(req, 6U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[3] SecurityAccess sendKey", req, 6U, resp, 2000U);
   if (n < 2U || resp[0] != 0x67U || resp[1] != 0x02U) bp_uds_report(4);
+  bp_log("    -> security unlocked\r\n");
 
   /* 4) RoutineControl start -> erase the staging slot (routineId 0xFF00). */
   req[0] = 0x31U; req[1] = 0x01U; req[2] = 0xFFU; req[3] = 0x00U;
-  n = bp_uds_xfer(req, 4U, resp, 5000U);   /* erase can be slow */
+  n = bp_uds_xfer("\r\n[4] RoutineControl start: erase staging slot (0xFF00)", req, 4U, resp, 5000U);
   if (n < 2U || resp[0] != 0x71U || resp[1] != 0x01U) bp_uds_report(5);
 
   /* 5) RequestDownload: 8 bytes at SLOT_B. [0x34][dfi=0][ALFID=0x44][addr:4][size:4] */
@@ -337,19 +373,19 @@ static void bp_uds_client(void)
   req[3] = (uint8_t)(SLOT_B >> 24); req[4] = (uint8_t)(SLOT_B >> 16);
   req[5] = (uint8_t)(SLOT_B >> 8);  req[6] = (uint8_t)(SLOT_B);
   req[7] = 0x00U; req[8] = 0x00U; req[9] = 0x00U; req[10] = 0x08U;
-  n = bp_uds_xfer(req, 11U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[5] RequestDownload: 8 bytes @ 0x08015000", req, 11U, resp, 2000U);
   if (n < 1U || resp[0] != 0x74U) bp_uds_report(6);
 
   /* 6) TransferData block #1: [0x36][BSC=1][8 payload bytes]. */
   req[0] = 0x36U; req[1] = 0x01U;
   req[2] = 0xDEU; req[3] = 0xADU; req[4] = 0xBEU; req[5] = 0xEFU;
   req[6] = 0x11U; req[7] = 0x22U; req[8] = 0x33U; req[9] = 0x44U;
-  n = bp_uds_xfer(req, 10U, resp, 3000U);
+  n = bp_uds_xfer("\r\n[6] TransferData block #1 (DE AD BE EF 11 22 33 44)", req, 10U, resp, 3000U);
   if (n < 2U || resp[0] != 0x76U || resp[1] != 0x01U) bp_uds_report(7);
 
   /* 7) RequestTransferExit. */
   req[0] = 0x37U;
-  n = bp_uds_xfer(req, 1U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[7] RequestTransferExit", req, 1U, resp, 2000U);
   if (n < 1U || resp[0] != 0x77U) bp_uds_report(8);
 
   bp_uds_report(0);   /* full UDS reprogramming sequence succeeded over real CAN */
