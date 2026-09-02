@@ -36,11 +36,17 @@
 #include "bootloader.h"
 #include "bl_config.h"
 #include "bl_isotp.h"
+#include "bl_uds.h"
 
-/* Set to 1 in a throwaway build to run the ISO-TP loopback self-test at boot
-   and halt showing the result on LD2. Leave 0 for normal bootloader operation. */
+/* Set either to 1 in a throwaway build to run the matching self-test at boot and
+   halt showing the result on LD2 (0 = normal bootloader operation). Run one at a
+   time. Result: LD2 solid = pass; otherwise LD2 blinks the diagnostic code N
+   times, pauses, and repeats (codes in bl_isotp.h / bl_uds.h). */
 #ifndef BL_ISOTP_SELFTEST_ON_BOOT
 #define BL_ISOTP_SELFTEST_ON_BOOT   0
+#endif
+#ifndef BL_UDS_SELFTEST_ON_BOOT
+#define BL_UDS_SELFTEST_ON_BOOT     0
 #endif
 
 /* USER CODE END Includes */
@@ -76,6 +82,31 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if BL_ISOTP_SELFTEST_ON_BOOT || BL_UDS_SELFTEST_ON_BOOT
+/* Report a self-test result on LD2 and halt: code 0 = solid ON (pass); any other
+   code blinks N times, pauses ~1.5 s, and repeats, so it can be read without a
+   debugger. */
+static void bl_selftest_report(int code)
+{
+    if (code == 0)
+    {
+        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+        while (1) { /* solid ON = pass */ }
+    }
+    while (1)
+    {
+        for (int b = 0; b < code; b++)
+        {
+            HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+            HAL_Delay(250);
+            HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+            HAL_Delay(250);
+        }
+        HAL_Delay(1500);   /* gap before repeating the count */
+    }
+}
+#endif
+
 /* Boot Manager -> Application handoff (Slot A) */
 void BootMgr_JumpToApp(void)
 {
@@ -153,29 +184,14 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
 #if BL_ISOTP_SELFTEST_ON_BOOT
-  /* Throwaway diagnostic: exercise the isotp-c stack in one-board CAN loopback.
-     PASS (code 0) = LD2 solid ON. FAIL = LD2 blinks the code N times, pauses,
-     and repeats, so the failing stage can be read off without a debugger
-     (codes documented in bl_isotp.h). Halts either way. */
-  {
-      int isotp_rc = BL_ISOTP_SelfTest();
-      if (isotp_rc == 0)
-      {
-          HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-          while (1) { /* solid ON = ISO-TP loopback passed */ }
-      }
-      while (1)
-      {
-          for (int b = 0; b < isotp_rc; b++)
-          {
-              HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-              HAL_Delay(250);
-              HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-              HAL_Delay(250);
-          }
-          HAL_Delay(1500);   /* gap before repeating the count */
-      }
-  }
+  /* Throwaway diagnostic: exercise the isotp-c stack in software loopback.
+     Halts showing the result on LD2 (codes documented in bl_isotp.h). */
+  bl_selftest_report(BL_ISOTP_SelfTest());
+#endif
+#if BL_UDS_SELFTEST_ON_BOOT
+  /* Throwaway diagnostic: drive a full UDS reprogramming sequence in software
+     loopback. Halts showing the result on LD2 (codes documented in bl_uds.h). */
+  bl_selftest_report(BL_UDS_SelfTest());
 #endif
   FBL_EnsureBmState();   /* keep the Boot Manager.s FBL-CRC record current */
 
