@@ -37,8 +37,15 @@ on real hardware.
   ISO 14229-1), tested on host, on-chip, and node-to-node over real CAN. It's a self-contained
   optional module that's deliberately kept out of the shipping bootloader to keep the FBL lean.
   See [ISO-TP_UDS_STACK.md](STM32F103RBT6_Secure_Bootloader/ISO-TP_UDS_STACK.md).
+- **Verified boot chain.** The Boot Manager runs first and CRC-checks the FBL before handing
+  control to it; the FBL verifies the app's signature at install and its CRC at every boot.
+  Trust flows up from the immutable Boot Manager.
 - **Locked root of trust.** The Boot Manager can be write-protected (WRP) so it's
   physically immutable, even against an ST-Link.
+- **Tested, and validated in CI.** An off-target validation layer runs on every push: an
+  ISO 22901 (ODX) description of the UDS services, an ISO 14229 conformance suite, UDS
+  fuzz/robustness tests, a CAN bus simulation (ISO-TP over python-can), and a CAPL tester for
+  CANoe / CANalyzer — see [Diagnostics & validation](#diagnostics--validation).
 
 ## Hardware required
 
@@ -221,7 +228,8 @@ runs it on every push.
   out-of-turn requests asserting the server never crashes, always answers with a well-formed
   response, and never leaks privilege while locked.
 - **Bus simulation** (`tests/uds_bus_sim.py`) — the same sequence over a virtual CAN bus
-  (python-can), segmented with ISO-TP, printing the CAN frame trace.
+  (python-can), segmented with ISO-TP, printing the CAN frame trace; `--log` exports the
+  capture for offline viewing in BUSMASTER or SavvyCAN.
 - **CAPL tester** (`diagnostics/canoe/UdsTester.can`) — the sequence as a CAPL node for
   CANoe / CANalyzer.
 - **CI** (`.github/workflows/ci.yml`) — validates the ODX and runs the conformance and fuzz
