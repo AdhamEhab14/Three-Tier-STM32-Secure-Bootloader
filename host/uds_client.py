@@ -30,15 +30,29 @@ def fail(msg):
 
 
 def open_raw(port):
-    """Open the port and put the bridge into raw ISO-TP passthrough mode."""
-    s = serial.Serial(port, 115200, timeout=6)
-    time.sleep(0.2)
-    s.reset_input_buffer()
-    s.write(bytes([0x02, 0xE0, 0x03]))     # SET_BRIDGE -> BUS_CAN_RAW
-    ack = s.read(3)
-    if len(ack) != 3 or ack[0] != 0xCD or ack[2] != 0x03:
-        fail(f"bridge did not enter raw mode (ack={ack.hex(' ') or 'none'})")
-    return s
+    """Open the port and put the bridge into raw ISO-TP passthrough mode.
+
+    The bridge acks SET_BRIDGE at 115200, then drops the link to 9600 (this
+    clone's USART1 can be marginal at 115200), so we follow it down to 9600.
+    """
+    s = serial.Serial(port, 115200, timeout=2)
+    time.sleep(0.3)
+    ack = b""
+    for _ in range(6):
+        s.baudrate = 115200
+        s.reset_input_buffer()
+        s.write(bytes([0x02, 0xE0, 0x03]))     # SET_BRIDGE -> BUS_CAN_RAW
+        ack = s.read(3)
+        if len(ack) == 3 and ack[0] == 0xCD and ack[2] == 0x03:
+            s.baudrate = 9600                  # bridge switched to 9600 after acking
+            time.sleep(0.1)
+            s.reset_input_buffer()
+            s.timeout = 6
+            return s
+        time.sleep(0.2)
+    fail("bridge did not enter raw mode (ack=%s). Is the Blue Pill running the "
+         "NORMAL bridge (BP_UDS_CLIENT_ON_BOOT = 0), not the client firmware?"
+         % (ack.hex(' ') if ack else 'none'))
 
 
 def xfer(s, label, pdu):

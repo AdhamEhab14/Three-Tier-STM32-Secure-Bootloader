@@ -374,6 +374,13 @@ static void bp_uds_client(void)
   int      i;
 
   HAL_Delay(300);   /* let the server settle after power-up */
+
+  /* This clone's USART1 + USB-serial can be marginal at 115200 (the framed
+     protocol hides it behind a CRC, but plain-text logging shows every glitch).
+     Drop to a rock-solid 9600 for the transcript - set the terminal to 9600. */
+  huart1.Init.BaudRate = 9600U;
+  HAL_UART_Init(&huart1);
+
   bp_log("\r\n=== UDS client: driving the Nucleo iso14229 server over CAN ===\r\n");
   bp_log("    requests on 0x7E0, single-frame replies on 0x7E8\r\n");
 
@@ -530,6 +537,15 @@ int main(void)
       bridge_bus = frame[2];
       uint8_t ack[3] = { 0xCDU, 0x01U, bridge_bus };
       HAL_UART_Transmit(&huart1, ack, 3U, HAL_MAX_DELAY);
+      /* Raw UDS passthrough runs the serial link at a rock-solid 9600 (this
+         clone can be marginal at 115200); the normal bl_host buses keep the
+         native 115200. The ACK above already went out at the native baud; a
+         board reset restores 115200 after a raw session. */
+      if (bridge_bus == BUS_CAN_RAW) {
+        HAL_Delay(5);
+        huart1.Init.BaudRate = 9600U;
+        HAL_UART_Init(&huart1);
+      }
       continue;
     }
 
