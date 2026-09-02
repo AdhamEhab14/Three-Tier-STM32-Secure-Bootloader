@@ -1,39 +1,29 @@
-# Standards ISO-TP + UDS stack (isotp-c + iso14229)
+# Standards ISO-TP + UDS stack
 
 A standards-compliant **ISO 15765-2 (ISO-TP)** transport and **ISO 14229-1 (UDS)** diagnostic
-server, ported to the STM32F103 as an optional, self-contained subsystem alongside the
-bootloader's existing hand-rolled command layer.
+server ported to the STM32F103, provided as an optional, self-contained module alongside the
+bootloader's own hand-rolled command layer. It is built on two established open-source libraries —
+[isotp-c](https://github.com/SimonCahill/isotp-c) for the transport and
+[iso14229](https://github.com/driftregion/iso14229) for the UDS server — bridged to the CAN1
+peripheral and the flash driver by a thin glue layer.
 
-It was added in response to a suggestion on
-[issue #1](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/1) to port
-two well-known open-source libraries instead of relying only on the minimal hand-rolled
-ISO-TP/UDS-style code.
-
-## Status: ported and verified, not yet live-integrated
-
-- ✅ **Ported** to bare-metal STM32F103 (Cortex-M3, no RTOS).
-- ✅ **Verified on host** — the real `iso14229.c` + `isotp.c` are compiled with the actual glue
-  and driven through a full reprogramming sequence (see *Testing*).
-- ✅ **Verified on hardware** — an on-board self-test runs the whole UDS sequence in software
-  loopback on the Nucleo and reports pass/fail on LD2.
-- ⏳ **Not compiled into the production FBL.** The full stack does not fit the FBL's 40 KB flash
-  budget alongside the existing feature set (see *Flash / RAM budget*). Live integration is
-  gated on a flash-map change and is intentionally left out; the production bootloader is
-  byte-for-byte unaffected.
+Every build switch defaults off, so the production bootloader links none of it and is unchanged.
+The module is kept out of the shipping image by design, to keep the FBL lean — see
+[Footprint](#footprint).
 
 ## Libraries
 
-Vendored under [`Core/ThirdParty/`](Core/ThirdParty) with pinned upstream commits recorded in
-[`Core/ThirdParty/UPSTREAM.md`](Core/ThirdParty/UPSTREAM.md):
+Vendored under [`Core/ThirdParty/`](Core/ThirdParty) (source copied in rather than submoduled, so
+STM32CubeIDE builds them straight from the tree). The exact upstream commits are pinned in
+[`Core/ThirdParty/UPSTREAM.md`](Core/ThirdParty/UPSTREAM.md).
 
 | Library | Standard | Role |
 | --- | --- | --- |
-| [isotp-c](https://github.com/SimonCahill/isotp-c) | ISO 15765-2 | Segmentation / reassembly + flow control over CAN |
-| [iso14229](https://github.com/driftregion/iso14229) | ISO 14229-1 | UDS server (services + state machine) |
+| isotp-c | ISO 15765-2 | Segmentation, reassembly, and flow control over CAN |
+| iso14229 | ISO 14229-1 | UDS server (services and state machine) |
 
-> Under `UDS_SYS=UDS_SYS_CUSTOM`, iso14229 does **not** compile its own bundled copy of isotp-c,
-> so there is no symbol clash with the standalone isotp-c we vendored. The two are bridged by our
-> own glue instead.
+Under `UDS_SYS=UDS_SYS_CUSTOM`, iso14229 does not compile its own bundled copy of isotp-c, so there
+is no symbol clash with the standalone library; the two are bridged by this project's glue instead.
 
 ## Architecture
 
@@ -41,97 +31,78 @@ Vendored under [`Core/ThirdParty/`](Core/ThirdParty) with pinned upstream commit
 UDS client (CAN 0x7E0 / 0x7E8)
         |
         v
-iso14229 UDS server  ── bl_uds.c ──►  flash driver (FlashIf_*)
-        |  (UDSTp_t bridge)
+iso14229 UDS server  --  bl_uds.c  -->  flash driver (FlashIf_*)
+        |  (UDSTp bridge)
         v
-isotp-c transport    ── bl_isotp.c ─►  CAN1 (bxCAN)
+isotp-c transport    --  bl_isotp.c -->  CAN1 (bxCAN)
 ```
 
-- [`Core/Src/bl_isotp.c`](Core/Src/bl_isotp.c) — isotp-c ↔ CAN1 glue: the three `isotp_user_*`
-  callbacks, an RX pump that routes frames to links by CAN ID, and a software-loopback harness
-  used by the self-tests.
-- [`Core/Src/bl_uds.c`](Core/Src/bl_uds.c) — a `UDSTp_t` transport bridge wrapping one ISO-TP
-  link, `UDSMillis()` from `HAL_GetTick()`, and the UDS server event handler.
-- Addressing: requests on `0x7E0`, replies on `0x7E8` (UDS-style).
+- **[`Core/Src/bl_isotp.c`](Core/Src/bl_isotp.c)** — isotp-c to CAN1 glue: the three user callbacks
+  the library requires, plus an RX pump that routes each incoming frame to the correct link by CAN
+  ID.
+- **[`Core/Src/bl_uds.c`](Core/Src/bl_uds.c)** — a `UDSTp` transport bridge over one isotp-c link,
+  `UDSMillis()` wired to `HAL_GetTick()`, and the UDS service handlers.
+- **Addressing** — requests on `0x7E0`, replies on `0x7E8`.
 
-### UDS services implemented
+### UDS services
 
 | Service | SID | Behaviour |
 | --- | --- | --- |
-| DiagnosticSessionControl | `0x10` | default / programming / extended |
-| SecurityAccess | `0x27` | seed/key unlock, level 1 (see security note) |
-| RoutineControl | `0x31` | routine `0xFF00` erases the A/B staging slot |
-| RequestDownload | `0x34` | validates the target lies in the staging slot |
-| TransferData | `0x36` | streams blocks to the flash driver |
+| DiagnosticSessionControl | `0x10` | default / programming / extended session |
+| SecurityAccess | `0x27` | seed/key unlock (see [Security](#security)) |
+| CommunicationControl | `0x28` | enable/disable normal communication during programming |
+| ControlDTCSetting | `0x85` | suspend/resume DTC logging during programming |
+| RoutineControl | `0x31` | routine `0xFF00` erases the staging slot; `0xFF01` returns a CRC-32 of a region (CheckMemory) |
+| RequestDownload | `0x34` | validates the target lies inside the staging slot |
+| TransferData | `0x36` | writes each block through the flash driver, block sequence counter checked |
 | RequestTransferExit | `0x37` | ends the download |
-| ReadMemoryByAddress | `0x23` | reads the staging slot back (download verification) |
-| ECUReset | `0x11` | accepts and resets the MCU |
+| ReadMemoryByAddress | `0x23` | reads the staging slot back, for download verification |
+| ECUReset | `0x11` | acknowledges, then resets the MCU |
 
-The image is streamed into **Slot B** (staging). The existing command layer still owns the
-Ed25519 verification and the A/B copy-into-Slot-A swap.
+New firmware is streamed into **Slot B**, the A/B staging slot. The Ed25519 signature check and the
+copy-into-Slot-A swap remain the responsibility of the existing command layer.
 
-### Security note
+### Security
 
-The `0x27` seed/key relation is a lightweight session unlock, **not** the cryptographic root of
-trust. Firmware images remain authenticated by their **Ed25519 signature at install time** — that
-is unchanged by this stack.
+The `0x27` seed/key is a session unlock, not the cryptographic root of trust. Firmware images remain
+authenticated by their Ed25519 signature at install time, which this module does not change; the
+seed/key only gates whether a client may start a download.
 
 ## Build switches
 
-All in [`Core/Inc/bl_config.h`](Core/Inc/bl_config.h) and `main.c`; every one defaults to off, so
-the production build never links the stack:
+Defined in [`Core/Inc/bl_config.h`](Core/Inc/bl_config.h) and `main.c`, all default to `0`, so a
+normal build never links the module:
 
-| Macro | Default | Effect |
+| Macro | Project | Effect |
 | --- | --- | --- |
-| `BL_USE_ISO_STACK` | `0` | reserved for a future live integration |
-| `BL_ISOTP_SELFTEST_ON_BOOT` | `0` | run the ISO-TP self-test at boot, halt on LD2 |
-| `BL_UDS_SELFTEST_ON_BOOT` | `0` | run the UDS self-test at boot, halt on LD2 |
+| `BL_ISOTP_SELFTEST_ON_BOOT` | FBL | run the ISO-TP self-test at boot, result on LD2 |
+| `BL_UDS_SELFTEST_ON_BOOT` | FBL | run the UDS self-test at boot, result on LD2 |
+| `BL_UDS_SERVER_ON_BOOT` | FBL | run the live UDS server on CAN (two-board test) |
+| `BP_UDS_CLIENT_ON_BOOT` | bridge | run the Blue Pill as a UDS client instead of the bridge |
 
-When a self-test macro is set, the normal bootloader body in `main()` is compiled out so the
-throwaway image (HAL + the stack + the self-test) fits the 40 KB region.
+When a switch is set, the normal bootloader body in `main()` is compiled out so the throwaway image
+fits the 40 KB FBL region.
 
 ## Testing
 
-### On host
+Verified at three levels:
 
-The real library + glue sources build and run on a PC with small HAL / flash stubs, driving the
-whole sequence (session → seed/key → erase → RequestDownload → TransferData → exit) and checking
-the payload lands at the staging address. This exercises the actual `bl_uds.c` / `bl_isotp.c` /
-`iso14229.c` / `isotp.c` code, only stubbing `HAL_GetTick` and the flash driver.
+- **Host** — the real `iso14229.c`, `isotp.c`, and the glue compile and run on a PC with small HAL
+  and flash stubs, driving the full sequence (session, seed/key, erase, RequestDownload,
+  TransferData, exit, read-back, CheckMemory) and confirming the written bytes and their CRC.
+- **On-chip software loopback** — the same sequence runs on the Nucleo with frames carried in a RAM
+  ring, reporting pass/fail on LD2 (a blink code identifies the failing stage; see
+  [`Core/Inc/bl_uds.h`](Core/Inc/bl_uds.h)).
+- **Two-node CAN bus** — the Nucleo runs the live server; the sequence is driven either by the Blue
+  Pill acting as a UDS client, or by the PC through the bridge's raw ISO-TP passthrough mode with
+  [`host/uds_client.py`](../host/uds_client.py). Both include a ReadMemoryByAddress read-back that
+  returns the freshly written bytes from flash.
 
-### On the Nucleo (software loopback)
+## Footprint
 
-1. Set `BL_UDS_SELFTEST_ON_BOOT` to `1` in `main.c` (leave the others at `0`).
-2. Build the **Release** configuration and flash.
-3. Read **LD2**: solid ON = pass; otherwise it blinks a diagnostic code `1..9` (documented in
-   [`Core/Inc/bl_uds.h`](Core/Inc/bl_uds.h)), pauses ~1.5 s, and repeats. A ~1 s pause before the
-   result is normal — the test waits out the SecurityAccess brute-force boot delay.
-4. Set the macro back to `0` for a normal build.
+Measured with `-Os` for Cortex-M3:
 
-`BL_ISOTP_SELFTEST_ON_BOOT` does the same for the transport layer alone (codes in
-[`Core/Inc/bl_isotp.h`](Core/Inc/bl_isotp.h)).
-
-### On the real two-node CAN bus
-
-The stack has also been driven end to end over a real CAN bus, node to node
-(verified on hardware):
-
-- **Nucleo** built with `BL_UDS_SERVER_ON_BOOT = 1` runs the live UDS server on CAN.
-- **Blue Pill as UDS client** (`BP_UDS_CLIENT_ON_BOOT = 1` in the bridge project) drives the
-  full sequence — session, seed/key, erase, RequestDownload, TransferData, RequestTransferExit,
-  and a ReadMemoryByAddress **read-back that confirms the transferred bytes landed in flash** —
-  and narrates the whole exchange over its USART1 (9600) plus a pass/fail LED.
-- **PC as UDS client**: the bridge's raw ISO-TP passthrough mode (`SET_BRIDGE` bus 3) plus
-  [`host/uds_client.py`](../host/uds_client.py) run the same sequence from the PC.
-
-These are throwaway test builds; every switch defaults to `0`, so the production FBL and the
-normal bridge are unchanged.
-
-## Flash / RAM budget
-
-Measured cost of the stack (`-Os`, cortex-m3):
-
-| Object | Flash | RAM |
+| Component | Flash | RAM |
 | --- | --: | --: |
 | iso14229 | ~12.3 KB | — |
 | isotp-c | ~2.3 KB | — |
@@ -139,13 +110,7 @@ Measured cost of the stack (`-Os`, cortex-m3):
 | bl_uds | ~1.1 KB | ~1.6 KB |
 | **Total** | **~16.5 KB** | **~1.9 KB** |
 
-The FBL region is **40 KB flash** and about **4 KB of low RAM** (below the RAM-resident SBL at
-`0x20001000`). The production FBL already fills most of that (Ed25519/TweetNaCl, the command
-layer, six transports), so it cannot also hold the full UDS server.
-
-### To integrate it live
-
-A live integration needs headroom the current map does not have. The realistic path is a
-**flash-map change** — grow the FBL region (e.g. 40 → 64 KB), which shifts the application, Slot B,
-and config regions and the Boot Manager's expectations. That is a deliberate, separate piece of
-work and is **not** done here; this subsystem stays a verified, self-contained option until then.
+The FBL region provides 40 KB of flash and about 4 KB of low RAM (below the RAM-resident SBL), most
+of which the production build already uses for the Ed25519 crypto, the command layer, and the
+transports. The full UDS server therefore ships as this separate module rather than being linked
+into the production image.
