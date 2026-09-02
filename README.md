@@ -32,6 +32,10 @@ on real hardware.
   (ISO-TP), SPI, I2C, Wi-Fi, and BLE.
 - **UDS reprogramming.** A working ISO 14229 sequence — session control, seed/key security
   access, RequestDownload / TransferData / RoutineControl — layered over the same protocol.
+  A separate **standards-library port** (isotp-c for ISO 15765-2 + iso14229 for ISO 14229-1)
+  is also included as a verified, self-contained subsystem — tested on host and on hardware,
+  but kept out of the production image until a flash-map change frees room. See
+  [ISO-TP_UDS_STACK.md](STM32F103RBT6_Secure_Bootloader/ISO-TP_UDS_STACK.md).
 - **Locked root of trust.** The Boot Manager can be write-protected (WRP) so it's
   physically immutable, even against an ST-Link.
 
