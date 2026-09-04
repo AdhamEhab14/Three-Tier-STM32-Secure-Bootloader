@@ -1,6 +1,7 @@
 # STM32F103 Secure Bootloader
 
 [![CI](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/actions/workflows/ci.yml/badge.svg)](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader)](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/releases)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-STM32F103RB-03234b)
 ![Language](https://img.shields.io/badge/language-C%20%7C%20Python-orange)
@@ -278,6 +279,15 @@ project's `.ioc` in STM32CubeIDE and generate code to restore them before buildi
 - On-chip USB DFU
 - An internal golden/factory recovery image
 - A tamper-proof hardware rollback counter
+- AES-CMAC (RFC 4493) seed/key for SecurityAccess (0x27), with the 3-attempt → 10 s
+  lockout policy (NRC 0x36/0x37) and power-on delay
+  ([#5](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/5))
+- A full session state machine for 0x10 — enforced transitions, S3 timeout to default,
+  and the Safety System session (0x04)
+  ([#4](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/4))
+- Table-driven per-service attributes: allowed sessions, minimum security level, and
+  physical/functional addressing
+  ([#3](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/3))
 
 ## Diagrams
 
