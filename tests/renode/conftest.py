@@ -20,6 +20,12 @@ BUILD = os.environ.get("BL_BUILD_DIR", "build-test")
 KEYS = os.path.join(ROOT, "tests", "keys")
 os.environ.setdefault("BL_KEYS_DIR", KEYS)
 
+# The TEST keys are derived from fixed seeds. The .bin files are git-ignored, so
+# regenerate them when a fresh checkout does not have them yet.
+if not os.path.exists(os.path.join(KEYS, "bl_private.bin")):
+    import subprocess
+    subprocess.check_call([sys.executable, os.path.join(KEYS, "make_test_keys.py")])
+
 
 @pytest.fixture(scope="module")
 def session():

@@ -101,7 +101,7 @@ jobs:
 
       - name: UDS conformance suite
         working-directory: tests
-        run: pytest -v --html=report.html --self-contained-html
+        run: pytest -v --ignore=renode --html=report.html --self-contained-html
 
       - name: UDS sequence over the virtual CAN bus
         working-directory: tests
