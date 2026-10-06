@@ -1,0 +1,4 @@
+# Host tools: bl_host.py, sign_tool.py, uds_client.py
+pyserial>=3.5
+pynacl>=1.5
+bleak>=0.21    # only needed for the BLE transport (ble: port)
