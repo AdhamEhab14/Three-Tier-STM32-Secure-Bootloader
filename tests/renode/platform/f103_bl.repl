@@ -1,0 +1,44 @@
+// STM32F103RB platform for running the bootloader unmodified in Renode.
+// Renode's stock F103 platform has no RCC, flash controller, CRC, CAN or
+// bit-banding, so those come from here. Paths are relative to the repo root,
+// which is where the harness starts Renode.
+using "platforms/cpus/stm32f103.repl"
+
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    filename: "tests/renode/models/rcc.py"
+
+flashctl: Python.PythonPeripheral @ sysbus 0x40022000
+    size: 0x400
+    initable: true
+    filename: "tests/renode/models/flash.py"
+
+can1: Python.PythonPeripheral @ sysbus 0x40006400
+    size: 0x400
+    initable: true
+    filename: "tests/renode/models/can_stub.py"
+
+crc: CRC.STM32_CRC @ sysbus 0x40023000
+    series: STM32Series.F4
+
+bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
+    peripheralBase: 0x40000000
+
+// Registers the bootloader only pokes while polling. Plain memory is enough
+// (SPI status reads as "nothing received", watchdog keys are accepted) and
+// avoids Renode's slow unimplemented-register path.
+spi2: Memory.MappedMemory @ sysbus 0x40003800
+    size: 0x400
+
+iwdg: Memory.MappedMemory @ sysbus 0x40003000
+    size: 0x400
+
+// The stock model assumes an 8 MHz peripheral clock. The firmware programs its
+// baud-rate registers for 36 MHz (USART2/3 on APB1) and 72 MHz (USART1 on APB2),
+// so without this the emulated line runs at about a quarter of the real baud rate.
+usart1:
+    frequency: 72000000
+
+usart2:
+    frequency: 36000000
