@@ -135,7 +135,14 @@ not the ability to forge firmware for the fleet.
 
 ## Building and running
 
-You need STM32CubeIDE, an ST-Link, and Python with `pyserial` and `pynacl` (plus `bleak` for
+To build from the command line you need `arm-none-eabi-gcc`, CMake and Ninja:
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+cmake --build build        # boot_manager / fbl / application / bluepill_bridge .elf and .bin
+```
+
+The STM32CubeIDE projects still work too. You also need an ST-Link, and Python with `pyserial` and `pynacl` (plus `bleak` for
 the BLE link). Generate the keys once and paste what they print into `bootloader.c`
 (`BL_PUBLIC_KEY[]` and `BL_ENC_KEY[]`):
 
@@ -267,8 +274,9 @@ tests/
 .github/workflows/ci.yml           ODX checks + conformance + fuzz suite on every push
 ```
 
-The HAL/CMSIS `Drivers/` folders and build outputs are generated and git-ignored. Open a
-project's `.ioc` in STM32CubeIDE and generate code to restore them before building.
+The HAL/CMSIS `Drivers/` folders are committed, so a fresh clone builds as is. Build outputs are
+git-ignored. If you change a peripheral, edit the project's `.ioc` in STM32CubeIDE and
+regenerate.
 
 ## Future work
 
