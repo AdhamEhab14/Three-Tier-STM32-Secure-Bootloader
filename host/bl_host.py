@@ -295,6 +295,7 @@ def udsflash(ser, path):
     img = open(path + (".enc" if encrypted else ""), "rb").read()
     tag = "encrypted " if encrypted else ""
 
+    if uds_req(ser, [0x10, 0x03], "extended session") is None: return   # programming is only reachable from extended
     if uds_req(ser, [0x10, 0x02], "session") is None: return          # programming session
     print("Programming session.")
 

@@ -62,6 +62,19 @@ isotp-c transport    --  bl_isotp.c -->  CAN1 (bxCAN)
 New firmware is streamed into **Slot B**, the A/B staging slot. The Ed25519 signature check and the
 copy-into-Slot-A swap remain the responsibility of the existing command layer.
 
+### Sessions and per-service rules
+
+Four sessions (`01` default, `02` programming, `03` extended, `04` safety system), one active at a time,
+default after power-up. Default can only go to extended; extended to any; programming and safety only back
+to default, so a download is always preceded by `10 03` then `10 02`. A change that is not allowed is
+answered `0x22`. A session change drops the unlock, and 5 s without a request (S3) returns to default.
+
+Each service has a row in `bl_udspolicy.c`: the sessions it works in, the security level it needs and the
+addressing it accepts. A request outside that is refused before the service sees it (`0x7F` wrong session,
+`0x33` locked, `0x11` physical-only service addressed functionally; a refused functional request is not
+answered at all, as the standard asks). Requests on `0x7DF` are functional, accepted as single frames;
+replies always go out on `0x7E8`. The production command layer applies the same table.
+
 ### Security
 
 The `0x27` seed/key is a session unlock, not the cryptographic root of trust. Firmware images remain

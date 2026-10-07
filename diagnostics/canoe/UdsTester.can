@@ -7,7 +7,7 @@
  * drives the full UDS reprogramming sequence against the bootloader's iso14229
  * server exactly as host/uds_client.py does over real CAN:
  *
- *   session -> seed/key -> erase -> RequestDownload -> TransferData
+ *   extended -> programming session -> seed/key -> erase -> RequestDownload -> TransferData
  *           -> RequestTransferExit -> ReadMemoryByAddress (read-back)
  *           -> RoutineControl CheckMemory (CRC-32)
  *
@@ -38,7 +38,7 @@ variables
 
   // Where we are in the sequence == the reply we are currently waiting for.
   enum SeqState {
-    S_IDLE, S_DSC, S_SEED, S_KEY, S_ERASE, S_RD, S_TD, S_EXIT, S_READ, S_CHECK
+    S_IDLE, S_EXT, S_DSC, S_SEED, S_KEY, S_ERASE, S_RD, S_TD, S_EXIT, S_READ, S_CHECK
   };
   enum SeqState gState = S_IDLE;
 
@@ -157,6 +157,14 @@ void handleReply(byte data[], dword len)
 
   switch (gState) {
 
+  case S_EXT:
+    if (len < 2 || data[0] != 0x50 || data[1] != 0x03) { seqFail("SessionControl (extended)", data, len); return; }
+    write("  ok  extended session");
+    gState = S_DSC;
+    req[0] = 0x10; req[1] = 0x02;          // programming can only be entered from extended
+    isotpSend(req, 2);
+    break;
+
   case S_DSC:
     if (len < 2 || data[0] != 0x50 || data[1] != 0x02) { seqFail("SessionControl", data, len); return; }
     write("  ok  programming session");
@@ -251,8 +259,8 @@ on key 'r'
 {
   byte req[2];
   write("==== UDS tester: starting reprogramming sequence ====");
-  gState = S_DSC;
-  req[0] = 0x10; req[1] = 0x02;          // DiagnosticSessionControl -> programming
+  gState = S_EXT;
+  req[0] = 0x10; req[1] = 0x03;          // DiagnosticSessionControl -> extended first
   isotpSend(req, 2);
 }
 

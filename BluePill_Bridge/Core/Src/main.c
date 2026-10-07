@@ -383,9 +383,12 @@ static void bp_uds_client(void)
   bp_log("\r\n=== UDS client: driving the Nucleo iso14229 server over CAN ===\r\n");
   bp_log("    requests on 0x7E0, single-frame replies on 0x7E8\r\n");
 
-  /* 1) DiagnosticSessionControl -> programming session. */
+  /* 1) DiagnosticSessionControl: extended first, programming can not be entered directly. */
+  req[0] = 0x10U; req[1] = 0x03U;
+  n = bp_uds_xfer("\r\n[1a] DiagnosticSessionControl (extended)", req, 2U, resp, 2000U);
+  if (n < 2U || resp[0] != 0x50U || resp[1] != 0x03U) bp_uds_report(2);
   req[0] = 0x10U; req[1] = 0x02U;
-  n = bp_uds_xfer("\r\n[1] DiagnosticSessionControl (programming)", req, 2U, resp, 2000U);
+  n = bp_uds_xfer("\r\n[1b] DiagnosticSessionControl (programming)", req, 2U, resp, 2000U);
   if (n < 2U || resp[0] != 0x50U || resp[1] != 0x02U) bp_uds_report(2);
 
   /* Wait out the server's ~1 s SecurityAccess boot delay. */

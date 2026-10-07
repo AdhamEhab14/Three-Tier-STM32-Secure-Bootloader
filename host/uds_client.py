@@ -81,9 +81,11 @@ def main():
     s = open_raw(sys.argv[1])
     print("=== PC UDS client -> Blue Pill (raw CAN) -> Nucleo iso14229 server ===")
 
-    # 1) DiagnosticSessionControl -> programming session
-    r = xfer(s, "[1] DiagnosticSessionControl (programming)", bytes([0x10, 0x02]))
-    need(r[:2] == bytes([0x50, 0x02]), "session control not accepted")
+    # 1) DiagnosticSessionControl -> extended, then programming (it can not be entered directly)
+    r = xfer(s, "[1a] DiagnosticSessionControl (extended)", bytes([0x10, 0x03]))
+    need(r[:2] == bytes([0x50, 0x03]), "extended session not accepted")
+    r = xfer(s, "[1b] DiagnosticSessionControl (programming)", bytes([0x10, 0x02]))
+    need(r[:2] == bytes([0x50, 0x02]), "programming session not accepted")
 
     print("    waiting out the ~1 s security boot delay...")
     time.sleep(1.3)
