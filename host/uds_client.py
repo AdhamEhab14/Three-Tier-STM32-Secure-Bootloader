@@ -15,11 +15,11 @@ Usage:
 The bridge relays each request straight onto CAN (0x7E0) and returns the raw
 ISO-TP reply, so this script speaks UDS directly - no CRC, no framing wrapper.
 """
+import seckey
 import sys
 import time
 import serial   # pip install pyserial
 
-SECRET = bytes([0x19, 0x84, 0xC0, 0xDE])   # must match bl_uds.c
 SLOT_B = 0x08015000                        # A/B staging slot base
 PAYLOAD = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44])
 
@@ -92,7 +92,7 @@ def main():
     r = xfer(s, "[2] SecurityAccess requestSeed", bytes([0x27, 0x01]))
     need(len(r) >= 6 and r[:2] == bytes([0x67, 0x01]), "seed not granted")
     seed = r[2:6]
-    key = bytes(a ^ b for a, b in zip(seed, SECRET))
+    key = seckey.key_for_seed(seed)
     print("    seed from server:", seed.hex(" "), " computed key:", key.hex(" "))
 
     # 3) SecurityAccess sendKey

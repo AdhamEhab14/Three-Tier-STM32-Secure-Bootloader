@@ -18,7 +18,7 @@ import time
 
 import can
 
-from virtual_ecu import VirtualEcu, SECRET, STAGING_BASE
+from virtual_ecu import VirtualEcu, key_for_seed, STAGING_BASE
 
 CHANNEL = "udsbus"
 REQ_ID = 0x7E0     # tester -> ECU
@@ -177,7 +177,7 @@ def main():
     step("SessionControl", [0x10, 0x02], [0x50, 0x02])
 
     seed = step("requestSeed", [0x27, 0x01], [0x67, 0x01])[2:6]
-    key = bytes(s ^ k for s, k in zip(seed, SECRET))
+    key = key_for_seed(seed)
     step("sendKey", [0x27, 0x02, *key], [0x67, 0x02])
 
     step("erase staging", [0x31, 0x01, 0xFF, 0x00], [0x71, 0x01, 0xFF, 0x00])

@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from virtual_ecu import VirtualEcu, SECRET
+from virtual_ecu import VirtualEcu, key_for_seed
 
 
 class Uds:
@@ -49,7 +49,7 @@ class Uds:
                 continue
             break
         seed = seed_resp[2:6]
-        key = bytes(s ^ k for s, k in zip(seed, SECRET))
+        key = key_for_seed(seed)
         return self.send([0x27, 0x02, *key])
 
 

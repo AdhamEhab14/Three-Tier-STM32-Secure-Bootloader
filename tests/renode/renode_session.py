@@ -149,6 +149,16 @@ class RenodeSession:
         if "error" in out.lower():
             raise RuntimeError("Renode rejected a batch:\n%s" % out[-400:])
 
+    def idle(self, seconds, mips=4):
+        """Let virtual time pass while the firmware sits in its polling loop. Slowing the
+        emulated CPU makes that cheap in wall-clock time; timers (SysTick) follow virtual
+        time, so the firmware's own clock still advances by `seconds`."""
+        self.cmd("cpu PerformanceInMips %d" % mips)
+        try:
+            self.run_for(seconds)
+        finally:
+            self.cmd("cpu PerformanceInMips 72")
+
     def uart_write(self, data, baud=115200):
         """Inject bytes one at a time at wire speed. The F103 USART has a
         single-byte receive buffer, so bursts would overrun it, as on hardware."""

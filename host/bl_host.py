@@ -24,6 +24,7 @@ Requires: pip install pyserial   (plus 'bleak' only for a ble: transport)
 import sys
 import struct
 import socket
+import seckey
 import serial
 
 # ---- protocol constants ----
@@ -236,9 +237,9 @@ def bist(ser):
 
 
 # ---- UDS (ISO 14229) client, tunnelled through CMD_UDS over any transport ----
-def uds_key_from_seed(seed):
-    k = ((seed << 3) | (seed >> 29)) & 0xFFFFFFFF   # rotate left 3, must match the FBL
-    return (k ^ 0x5A3C96E1) & 0xFFFFFFFF
+def uds_key_from_seed(seed4):
+    """The 4-byte SecurityAccess answer: first 4 bytes of AES-CMAC(K, seed) (see seckey.py)."""
+    return seckey.key_for_seed(seed4)
 
 
 def uds_req(ser, pdu, desc):
@@ -278,10 +279,8 @@ def udsflash(ser, path):
 
     r = uds_req(ser, [0x27, 0x01], "requestSeed")                     # security access
     if r is None or len(r) < 6: return
-    seed = (r[2] << 24) | (r[3] << 16) | (r[4] << 8) | r[5]
-    key = uds_key_from_seed(seed)
-    if uds_req(ser, [0x27, 0x02, (key >> 24) & 0xFF, (key >> 16) & 0xFF,
-                     (key >> 8) & 0xFF, key & 0xFF], "sendKey") is None: return
+    key = uds_key_from_seed(bytes(r[2:6]))
+    if uds_req(ser, [0x27, 0x02] + list(key), "sendKey") is None: return
     print("Unlocked.")
 
     size = len(img)

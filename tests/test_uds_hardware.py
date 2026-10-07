@@ -20,6 +20,11 @@ the A/B staging slot and never runs the install routine, so the live app is
 never touched.
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "host"))
+import seckey  # noqa: E402
+import os
 
 import pytest
 
@@ -27,14 +32,13 @@ HW_PORT = os.environ.get("HW_PORT")
 pytestmark = pytest.mark.skipif(
     not HW_PORT, reason="set HW_PORT (e.g. can:COM6) to run against the board")
 
-UDS_KEY_SECRET = 0x5A3C96E1        # must match bootloader.c
 SLOT_B_BASE = 0x08015000           # staging slot; RequestDownload only accepts this
 
 
 def prod_key(seed):
-    """key = rotate-left-3(seed) XOR secret - the production uds_key_from_seed()."""
-    rotated = ((seed << 3) | (seed >> 29)) & 0xFFFFFFFF
-    return rotated ^ UDS_KEY_SECRET
+    """The production key for a seed (int): first 4 bytes of AES-CMAC(K, seed), as an int.
+    K comes from BL_SEC_KEY_FILE / BL_KEYS_DIR, else the public demo key (see host/seckey.py)."""
+    return int.from_bytes(seckey.key_for_seed(seed.to_bytes(4, "big")), "big")
 
 
 @pytest.fixture(scope="module")

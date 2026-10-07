@@ -19,13 +19,16 @@
  * minimal (block size 0, no STmin) because a bench tester never needs more.
  */
 
+includes
+{
+  #include "seckey.cin"   // keyForSeed(): first 4 bytes of AES-CMAC(K, seed)
+}
+
 variables
 {
   const dword REQ_ID  = 0x7E0;   // tester -> ECU
   const dword RESP_ID = 0x7E8;   // ECU -> tester
 
-  // Shared secret behind SecurityAccess: key[i] = seed[i] XOR SECRET[i].
-  const byte  SECRET[4]     = {0x19, 0x84, 0xC0, 0xDE};
   const dword STAGING_BASE  = 0x08015000;   // SLOT_B_BASE, the download window
 
   // The 8 bytes we program and then read back to prove the round trip.
@@ -164,7 +167,8 @@ void handleReply(byte data[], dword len)
 
   case S_SEED:
     if (len < 6 || data[0] != 0x67 || data[1] != 0x01) { seqFail("requestSeed", data, len); return; }
-    for (i = 0; i < 4; i++) { gSeed[i] = data[2 + i]; key[i] = gSeed[i] ^ SECRET[i]; }
+    for (i = 0; i < 4; i++) gSeed[i] = data[2 + i];
+    keyForSeed(gSeed, key);
     write("  ok  seed %02X %02X %02X %02X", gSeed[0], gSeed[1], gSeed[2], gSeed[3]);
     gState = S_KEY;
     req[0] = 0x27; req[1] = 0x02;

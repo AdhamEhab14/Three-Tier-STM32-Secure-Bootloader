@@ -12,9 +12,18 @@ and no CAN bus attached. The rules encoded here are the contract; the same test
 cases can later be pointed at the real ECU to confirm it honours that contract.
 """
 
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "host"))
+import seckey  # noqa: E402
+
 # ---- constants that mirror bl_uds.c / bootloader.h -------------------------
 
-SECRET = bytes([0x19, 0x84, 0xC0, 0xDE])   # key = seed XOR SECRET
+def key_for_seed(seed):
+    """The key the server expects: first 4 bytes of AES-CMAC(K, seed). K is the demo key,
+    which is what a default (no BL_SEC_KEY_HEADER) firmware build contains."""
+    return seckey.key_for_seed(seed, seckey.DEMO_KEY)
 SEC_LEVEL = 0x01
 
 STAGING_BASE = 0x08015000                  # SLOT_B_BASE
@@ -132,7 +141,7 @@ class VirtualEcu:
             if self.seed is None:                        # sendKey before requestSeed
                 return self._neg(0x27, NRC_REQUEST_SEQUENCE_ERROR)
             key = pdu[2:]
-            expected = bytes(s ^ k for s, k in zip(self.seed, SECRET))
+            expected = key_for_seed(self.seed)
             if len(key) != 4 or key != expected:
                 self.key_attempts += 1
                 return self._neg(0x27, NRC_INVALID_KEY)

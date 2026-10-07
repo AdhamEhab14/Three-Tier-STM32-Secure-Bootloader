@@ -10,7 +10,7 @@ specific negative response code. Run it with:
 against the in-process VirtualEcu, or later against the real board through a
 bridge transport. The rules are lifted straight from Core/Src/bl_uds.c.
 """
-from virtual_ecu import STAGING_BASE, STAGING_SIZE, SECRET
+from virtual_ecu import STAGING_BASE, STAGING_SIZE, key_for_seed
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -60,7 +60,7 @@ def test_unknown_service_rejected(uds):
 
 def test_seed_then_correct_key_unlocks(uds):
     seed = uds.send([0x27, 0x01])[2:6]
-    key = bytes(s ^ k for s, k in zip(seed, SECRET))
+    key = key_for_seed(seed)
     assert_positive(uds.send([0x27, 0x02, *key]), 0x27)
 
 
