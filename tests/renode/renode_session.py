@@ -285,5 +285,9 @@ class RenodeSerial:
         del self.s.rx[:n]
         return out
 
+    def sleep(self, seconds):
+        """bl_host waits through this, so a wait advances emulated time rather than real time."""
+        self.s.idle(seconds)
+
     def close(self):
         pass

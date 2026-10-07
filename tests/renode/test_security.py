@@ -141,3 +141,10 @@ def test_a_wrong_key_starts_a_delay_and_three_start_a_lockout(open_gate):
     seed_resp = request_seed(ser)
     assert seed_resp[:2] == bytes([0x67, 0x01]), "still locked out after 10 s"
     assert send_key(ser, seckey.key_for_seed(seed_resp[2:6])) == bytes([0x67, 0x02])
+
+
+def test_the_host_tool_waits_out_the_boot_delay_by_itself(fresh):
+    """bl_host.py asks for a seed right after power-up; it has to sit through the 0x37 and retry."""
+    _, ser = fresh
+    assert bl_host.uds_unlock(ser) is True
+    assert request_seed(ser)[2:6] == bytes(4), "the board should now be unlocked"
