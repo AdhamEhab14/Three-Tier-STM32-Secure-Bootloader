@@ -2,6 +2,7 @@
 #   firmware     - compiles all four firmware projects with arm-none-eabi-gcc
 #                  (HAL/CMSIS are committed, so a clean clone builds) and keeps
 #                  the .bin files as a build artifact.
+#   static-analysis - a strict build, clang-tidy and cppcheck on the hand-written sources.
 #   emulator     - boots the real Boot Manager + FBL in Renode and drives them
 #                  with the real host tool (signed install, anti-rollback, tamper).
 #   powercut     - cuts power at each kind of flash operation during an FBL self-update
@@ -38,6 +39,22 @@ jobs:
           name: firmware-bins
           path: build/*.bin
 
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build clang-tidy cppcheck
+
+      - name: Strict build (extra warnings as errors, GCC static analyzer)
+        run: |
+          cmake -S . -B build-strict -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_STRICT=ON -DBL_TEST_KEYS=ON
+          cmake --build build-strict
+
+      - name: clang-tidy and cppcheck
+        run: scripts/lint.sh
+
   emulator:
     runs-on: ubuntu-latest
     env:
@@ -65,6 +82,9 @@ jobs:
         run: |
           cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
           cmake --build build-test
+          # the iso14229 server boots into its own self-test in this variant
+          cmake -S . -B build-udsself -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+          cmake --build build-udsself
 
       - name: Set up Python
         uses: actions/setup-python@v5

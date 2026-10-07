@@ -26,3 +26,5 @@ __pycache__/
 build/
 build-test/
 tests/renode/_work/
+build-udsself/
+build-strict/
