@@ -91,9 +91,10 @@ not answer that handshake, so this path is parked until that firmware lands.
 - **Sessions** - default / programming / extended accepted; an unknown
   sub-function is refused with `subFunctionNotSupported (0x12)`.
 - **Unknown service** - refused with `serviceNotSupported (0x11)`.
-- **Security access** - the correct seed/key (`key = seed XOR 19 84 C0 DE`)
-  unlocks; a wrong key or a wrong-length key gives `invalidKey (0x35)`; repeated
-  bad keys lock the level with `exceededNumberOfAttempts (0x36)`.
+- **Security access** - the correct seed/key (first 4 bytes of AES-CMAC of the
+  seed, see `host/seckey.py`) unlocks; a wrong key or a wrong-length key gives
+  `invalidKey (0x35)`; repeated bad keys lock the level with
+  `exceededNumberOfAttempts (0x36)`. The model uses the public demo key.
 - **Security gate** - RoutineControl and RequestDownload are refused with
   `securityAccessDenied (0x33)` until the level is unlocked in a programming
   session.

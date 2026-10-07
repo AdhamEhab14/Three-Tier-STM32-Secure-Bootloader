@@ -68,6 +68,13 @@ The `0x27` seed/key is a session unlock, not the cryptographic root of trust. Fi
 authenticated by their Ed25519 signature at install time, which this module does not change; the
 seed/key only gates whether a client may start a download.
 
+The key is the first 4 bytes of AES-CMAC (RFC 4493) of the seed under a 128-bit key built into the
+firmware (`bl_seccrypto.c`), and each seed works for one attempt. The seed is itself derived under that
+key from a counter, the tick and the CPU cycle counter, so it cannot be predicted without the key. The
+brute-force policy (`bl_secaccess.c`) is shared with the production command layer: no `0x27` for 1 s
+after power-up (`0x37`), 1 s after a wrong key, 10 s once three wrong keys have piled up (`0x36`). With
+a 32-bit key that holds an online guesser to about three tries per ten seconds.
+
 ## Build switches
 
 Defined in [`Core/Inc/bl_config.h`](Core/Inc/bl_config.h) and `main.c`, all default to `0`, so a

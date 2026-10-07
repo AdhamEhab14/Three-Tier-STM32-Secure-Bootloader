@@ -111,6 +111,12 @@ What it does *not* fully cover on this particular MCU:
 - **Confidentiality.** The ChaCha20 key is symmetric and baked into the FBL, so anyone who
   can read the flash out can decrypt firmware images. The encryption protects firmware in
   transit and against a remote attacker, not against someone holding this chip.
+- **The SecurityAccess key.** UDS `0x27` answers a seed with the first 4 bytes of AES-CMAC
+  under a 128-bit key built into the FBL, so someone who can read the flash out can open
+  the diagnostic gate. What the scheme does stop is a bus-side attacker: the key cannot be
+  worked out from observed seed/key pairs, a seed works once, and guessing is held to about
+  three tries per ten seconds. The gate only decides who may start a download; images still
+  need the Ed25519 signature.
 - **Flash read-out.** The STM32F103 has only RDP levels 0 and 1 (no level 2), and RDP-1 is
   defeated by the well-documented debug-assisted bypass (Obermaier & Tatschner, 2017): the
   debug port isn't fully disabled, so the CPU can be driven to leak flash. Only parts with
@@ -171,7 +177,13 @@ the BLE link). Generate the keys once and paste what they print into `bootloader
 cd host
 python sign_tool.py genkey
 python sign_tool.py genenckey
+python sign_tool.py genseckey      # SecurityAccess key, see below
 ```
+
+The SecurityAccess key is built in from a header: pass `-DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h`
+to CMake (the host tools find `host/keys/bl_seckey.bin` on their own). Without it the firmware
+contains the **public demo key** from `bl_seckey_demo.h` and CMake says so, which is fine for a
+demo and nothing else.
 
 Flash the three projects with an ST-Link, in order: Boot Manager, then the FBL, then the
 App. To talk to the bootloader, hold **B1** and press reset — LD2 flickers, then it waits
@@ -308,9 +320,6 @@ regenerate.
 - On-chip USB DFU
 - An internal golden/factory recovery image
 - A tamper-proof hardware rollback counter
-- AES-CMAC (RFC 4493) seed/key for SecurityAccess (0x27), with the 3-attempt → 10 s
-  lockout policy (NRC 0x36/0x37) and power-on delay
-  ([#5](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/5))
 - A full session state machine for 0x10 — enforced transitions, S3 timeout to default,
   and the Safety System session (0x04)
   ([#4](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/4))

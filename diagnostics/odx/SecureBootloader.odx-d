@@ -58,7 +58,7 @@
 
             <DATA-OBJECT-PROP ID="DOP_KEY4">
               <SHORT-NAME>key_4bytes</SHORT-NAME>
-              <DESC><![CDATA[key[i] = seed[i] XOR {0x19,0x84,0xC0,0xDE}]]></DESC>
+              <DESC><![CDATA[key = first 4 bytes of AES-CMAC (RFC 4493) of the seed under the 128-bit SecurityAccess key]]></DESC>
               <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_BYTEFIELD" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
               <PHYSICAL-TYPE BASE-DATA-TYPE="A_BYTEFIELD"/>
               <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>

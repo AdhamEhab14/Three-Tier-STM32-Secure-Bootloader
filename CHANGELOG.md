@@ -16,7 +16,19 @@ All notable changes to this project are recorded here. The format follows
   non-current one is rewritten. The record format changed (two new fields), so the
   first install after upgrading re-seeds the floor.
 
+### Changed
+- SecurityAccess (UDS 0x27) answers a seed with the first 4 bytes of AES-CMAC (RFC 4493)
+  instead of an XOR with a constant. Seeds are derived under the same key (they were a
+  function of the tick), each works for one attempt, and a brute-force policy applies in
+  both UDS servers: 1 s boot delay, 1 s after a wrong key, 10 s from the third in a row.
+  Host tools, the Python model, the CAPL tester and the bridge self-test follow. A build
+  without `BL_SEC_KEY_HEADER` uses the public demo key. Closes #5.
+
 ### Tests
+- AES-CMAC checked against the RFC 4493 and FIPS-197 vectors, and the C, Python and CAPL
+  versions against each other on random inputs.
+- SecurityAccess on the real firmware in the emulator: boot delay, key, single-use seeds,
+  lockout.
 - Emulator tests that cut power at every kind of flash operation during an FBL
   self-update and an app install (`tests/renode`, marker `powercut`).
 
