@@ -1,9 +1,9 @@
 """Power cut while installing an application.
 
-An install erases the app pages, copies the app in, rewrites the metadata page (the
-installed version, which is also the anti-rollback floor), then rewrites the
-boot-trial page. After a cut at any of those points the device must still come back
-up in the bootloader, and an older image must still be refused.
+An install erases the app pages, copies the app in, rewrites the metadata (installed
+version, which is also the anti-rollback floor) and then the boot-trial page. After a cut
+at any of those points the device must come back up in the bootloader and still refuse an
+older image.
 """
 import os
 

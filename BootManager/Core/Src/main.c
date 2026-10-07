@@ -83,14 +83,13 @@ static uint32_t bm_crc_region(uint32_t addr, uint32_t len)
     return crc;
 }
 
-/* Finish an FBL self-update that was cut short.
+/* Finish an FBL self-update that lost power half way.
  *
- * Before the FBL's updater (SBL) touches the FBL region it records, in the state
- * page, the CRC of the new image and the UPDATING flag. The new image stays in
- * Slot B until the FBL boots and marks the record VALID, so as long as Slot B
- * still matches that CRC the copy can simply be redone from the top. It is safe to
- * repeat: a second power cut during recovery leaves the same state behind.
- * Returns 1 when the FBL region now matches the recorded CRC. */
+ * The FBL records the new image's CRC and the UPDATING flag before its updater touches
+ * the FBL region, and the new image stays in Slot B until the FBL has booted. So while
+ * Slot B still matches that CRC the copy can just be redone from the start, and a second
+ * cut during the redo leaves the same situation behind.
+ * Returns 1 once the FBL region matches the recorded CRC. */
 static int bm_recover_fbl(const bm_state_t *st)
 {
     FLASH_EraseInitTypeDef erase;
@@ -161,8 +160,8 @@ int main(void)
       fbl_ok = sp_ok;                                             /* first boot: sanity gate only  */
   else if (st->state == BM_FBL_UPDATING)
   {
-      /* mid-update: the FBL region is good only if it already holds the new image;
-         otherwise (old, half-erased or half-copied FBL) redo the copy from Slot B */
+      /* mid-update: fine only if the new image is already in place, otherwise
+         (old, half-erased or half-copied FBL) redo the copy from Slot B */
       fbl_ok = (bm_crc_region(FBL_BASE, FBL_SIZE) == st->crc) || bm_recover_fbl(st);
   }
   else /* BM_FBL_VALID */

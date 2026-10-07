@@ -1,8 +1,8 @@
 """Power cut during the bootloader's own self-update.
 
-The FBL erases its whole 40 KB region and copies the new image over from Slot B,
-so a cut at any point after the first erase leaves a half-written FBL. The Boot
-Manager has to be able to get the device back from every one of those states.
+The updater erases the whole 40 KB FBL region and then copies the new image over from
+Slot B, so a cut after the first erase leaves a half-written FBL. The Boot Manager has to
+bring the device back from each of those states.
 """
 import struct
 
