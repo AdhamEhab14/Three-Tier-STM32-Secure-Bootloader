@@ -31,6 +31,8 @@ void BL_UDS_Poll(void);
  *   1 = no response at all (transport / server stalled)
  *   2 = DiagnosticSessionControl not accepted
  *   3 = SecurityAccess seed not granted
+ *  20 = SecurityAccess was not refused in the default session
+ *  21 = default -> programming was not refused
  *   4 = SecurityAccess key rejected (not unlocked)
  *   5 = erase routine (0x31) rejected
  *   6 = RequestDownload (0x34) rejected

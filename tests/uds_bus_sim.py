@@ -174,7 +174,8 @@ def main():
 
     print("=== UDS reprogramming over a virtual CAN bus (0x7E0/0x7E8) ===")
 
-    step("SessionControl", [0x10, 0x02], [0x50, 0x02])
+    step("SessionControl (extended)", [0x10, 0x03], [0x50, 0x03])
+    step("SessionControl (programming)", [0x10, 0x02], [0x50, 0x02])
 
     seed = step("requestSeed", [0x27, 0x01], [0x67, 0x01])[2:6]
     key = key_for_seed(seed)

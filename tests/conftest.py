@@ -25,10 +25,16 @@ class Uds:
     def __init__(self, transport):
         self._transport = transport
 
+    @property
+    def transport(self):
+        return self._transport
+
     def send(self, pdu):
         return self._transport.request(bytes(pdu))
 
     def enter_programming(self):
+        """Programming can only be entered from the extended session."""
+        self.send([0x10, 0x03])
         return self.send([0x10, 0x02])
 
     def unlock(self):
@@ -39,7 +45,7 @@ class Uds:
         doesn't fail purely on boot timing. The model never returns 0x37, so this
         loop runs exactly once there.
         """
-        self.send([0x10, 0x02])
+        self.enter_programming()
         for _ in range(25):
             seed_resp = self.send([0x27, 0x01])
             if seed_resp[:2] == bytes([0x67, 0x01]):

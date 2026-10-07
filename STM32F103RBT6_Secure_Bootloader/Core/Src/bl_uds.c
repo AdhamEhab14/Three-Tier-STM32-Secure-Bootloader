@@ -16,14 +16,20 @@
 #include "iso14229.h"   /* UDS server + UDSTp transport interface */
 #include "bl_seccrypto.h"
 #include "bl_secaccess.h"
+#include "bl_udspolicy.h"
 #include <string.h>
 
 /* UDS addressing: requester -> FBL on 0x7E0, FBL -> requester on 0x7E8. */
 #define BL_UDS_ID_REQUEST   BL_ISOTP_ID_CMD     /* 0x7E0 */
 #define BL_UDS_ID_REPLY     BL_ISOTP_ID_REPLY   /* 0x7E8 */
+#define BL_UDS_ID_FUNCTIONAL 0x7DFU             /* functional (broadcast) requests, single frame only */
 
 /* Size of the server link's message buffers (matches the UDS server buffers). */
+#if defined(BL_UDS_SELFTEST_ON_BOOT) && BL_UDS_SELFTEST_ON_BOOT
+#define BL_UDS_LINK_BUF     160U   /* self-test only sends small messages, and RAM is tight next to the SBL */
+#else
 #define BL_UDS_LINK_BUF     256U
+#endif
 
 /* ==========================================================================
  *  Time base required by iso14229 under UDS_SYS_CUSTOM.
@@ -39,9 +45,9 @@ uint32_t UDSMillis(void)
  *  can cast between the two.
  * ========================================================================== */
 typedef struct {
-    UDSTp_t    hdl;    /* MUST be the first member */
-    IsoTpLink *link;   /* the server's ISO-TP link */
-    uint32_t   rx_id;  /* CAN ID whose frames belong to this link */
+    UDSTp_t    hdl;        /* MUST be the first member */
+    IsoTpLink *link[2];    /* [0] physical requests (0x7E0), [1] functional ones (0x7DF) */
+    uint32_t   rx_id[2];   /* CAN ID whose frames belong to each link */
 } bl_uds_tp_t;
 
 /* Send a whole UDS message: hand it to ISO-TP as one payload. */
@@ -49,9 +55,9 @@ static UDSTpSize_t bl_uds_tp_send(UDSTp_t *hdl, const uint8_t *buf, size_t len,
                                   const UDSSDU_t *info)
 {
     bl_uds_tp_t *tp = (bl_uds_tp_t *)hdl;
-    (void)info;   /* single physical channel: addressing is fixed */
+    (void)info;   /* replies always go out on 0x7E8, whichever way the request came in */
 
-    if (isotp_send(tp->link, buf, (uint32_t)len) != ISOTP_RET_OK) {
+    if (isotp_send(tp->link[0], buf, (uint32_t)len) != ISOTP_RET_OK) {
         return -1;
     }
     return (UDSTpSize_t)len;
@@ -63,16 +69,20 @@ static UDSTpSize_t bl_uds_tp_recv(UDSTp_t *hdl, uint8_t *buf, size_t bufsize,
 {
     bl_uds_tp_t *tp = (bl_uds_tp_t *)hdl;
     uint32_t out_len = 0;
+    int i;
 
-    if (isotp_receive(tp->link, buf, (uint32_t)bufsize, &out_len) != ISOTP_RET_OK) {
-        return 0;
+    for (i = 0; i < 2; i++) {
+        if (isotp_receive(tp->link[i], buf, (uint32_t)bufsize, &out_len) != ISOTP_RET_OK) {
+            continue;
+        }
+        if (info != NULL) {
+            info->A_TA_Type = (i == 0) ? UDS_A_TA_TYPE_PHYSICAL : UDS_A_TA_TYPE_FUNCTIONAL;
+            info->A_SA      = BL_UDS_ID_REQUEST;
+            info->A_TA      = BL_UDS_ID_REPLY;
+        }
+        return (UDSTpSize_t)out_len;
     }
-    if (info != NULL) {
-        info->A_TA_Type = UDS_A_TA_TYPE_PHYSICAL;
-        info->A_SA      = BL_UDS_ID_REQUEST;
-        info->A_TA      = BL_UDS_ID_REPLY;
-    }
-    return (UDSTpSize_t)out_len;
+    return 0;
 }
 
 /* Feed the link from CAN, then advance it. During the software self-test the
@@ -82,7 +92,7 @@ static UDSTpStatus_t bl_uds_tp_poll(UDSTp_t *hdl)
 {
     bl_uds_tp_t *tp = (bl_uds_tp_t *)hdl;
 
-    BL_ISOTP_Pump(&tp->link, &tp->rx_id, 1);
+    BL_ISOTP_Pump(tp->link, tp->rx_id, 2);
     return UDS_TP_IDLE;
 }
 
@@ -92,6 +102,9 @@ static UDSTpStatus_t bl_uds_tp_poll(UDSTp_t *hdl)
 static UDSServer_t g_srv;
 static bl_uds_tp_t g_tp;
 static IsoTpLink   g_link;
+static IsoTpLink   g_link_func;                 /* functional requests: one frame, so a tiny buffer */
+static uint8_t     g_link_func_tx[8];
+static uint8_t     g_link_func_rx[16];
 static uint8_t     g_link_tx[BL_UDS_LINK_BUF];
 static uint8_t     g_link_rx[BL_UDS_LINK_BUF];
 
@@ -179,11 +192,30 @@ static uint32_t bl_uds_crc32_region(uint32_t addr, uint32_t size)
     return crc ^ 0xFFFFFFFFU;
 }
 
-/* True only after SecurityAccess unlocked level 1 in a programming session. */
-static int bl_uds_reprogramming_allowed(const UDSServer_t *srv)
+/* The service a library event belongs to, 0 for events that are not requests. */
+static uint8_t bl_uds_event_sid(UDSEvent_t event)
 {
-    return (srv->securityLevel == BL_UDS_SEC_LEVEL) &&
-           (srv->sessionType == UDS_LEV_DS_PRGS);
+    switch (event) {
+    case UDS_EVT_DiagSessCtrl:          return 0x10U;
+    case UDS_EVT_EcuReset:              return 0x11U;
+    case UDS_EVT_ReadMemByAddr:         return 0x23U;
+    case UDS_EVT_SecAccessRequestSeed:
+    case UDS_EVT_SecAccessValidateKey:  return 0x27U;
+    case UDS_EVT_CommCtrl:              return 0x28U;
+    case UDS_EVT_RoutineCtrl:           return 0x31U;
+    case UDS_EVT_RequestDownload:       return 0x34U;
+    case UDS_EVT_TransferData:          return 0x36U;
+    case UDS_EVT_RequestTransferExit:   return 0x37U;
+    case UDS_EVT_ControlDTCSetting:     return 0x85U;
+    default:                            return 0U;
+    }
+}
+
+/* Drop everything a session or an unlock set up: used on a session change and on S3. */
+static void bl_uds_forget_session_state(void)
+{
+    g_seed_valid = 0U;
+    g_dl_addr = 0U;
 }
 
 /* Reset the MCU (target only; a no-op in the host self-test build). */
@@ -198,17 +230,32 @@ static void bl_uds_system_reset(void)
    library builds the positive reply), or a negative response code to reject. */
 static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
 {
+    uint8_t sid = bl_uds_event_sid(event);
+
+    /* Every request passes the same gate: the service has to accept this addressing, work in
+       the active session and have enough security (see bl_udspolicy.c). */
+    if (sid != 0U) {
+        uint8_t addressing = (srv->r.info.A_TA_Type == UDS_A_TA_TYPE_FUNCTIONAL)
+                             ? BL_ADDR_FUNCTIONAL : BL_ADDR_PHYSICAL;
+        uint8_t gate = BL_UdsGate(sid, srv->sessionType, srv->securityLevel, addressing);
+        if (gate != 0U) {
+            return (UDSErr_t)gate;
+        }
+    }
+
     switch (event) {
     case UDS_EVT_DiagSessCtrl: {
         UDSDiagSessCtrlArgs_t *a = (UDSDiagSessCtrlArgs_t *)arg;
-        switch (a->type) {
-        case UDS_LEV_DS_DS:      /* default session */
-        case UDS_LEV_DS_PRGS:    /* programming session */
-        case UDS_LEV_DS_EXTDS:   /* extended diagnostic session */
-            return UDS_PositiveResponse;
-        default:
+        if (!BL_UdsSessionKnown(a->type)) {
             return UDS_NRC_SubFunctionNotSupported;
         }
+        if (!BL_UdsSessionChangeAllowed(srv->sessionType, a->type)) {
+            return UDS_NRC_ConditionsNotCorrect;
+        }
+        /* The library keeps the unlock across a session change; a new session starts locked. */
+        srv->securityLevel = 0U;
+        bl_uds_forget_session_state();
+        return UDS_PositiveResponse;
     }
 
     case UDS_EVT_SecAccessRequestSeed: {
@@ -245,7 +292,8 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
 
     case UDS_EVT_RoutineCtrl: {
         UDSRoutineCtrlArgs_t *a = (UDSRoutineCtrlArgs_t *)arg;
-        if (!bl_uds_reprogramming_allowed(srv)) {
+        /* the erase and check routines write or read the staging slot: programming + unlocked only */
+        if (srv->sessionType != UDS_LEV_DS_PRGS || srv->securityLevel != BL_UDS_SEC_LEVEL) {
             return UDS_NRC_SecurityAccessDenied;
         }
         if (a->id == BL_UDS_RID_ERASE && a->ctrlType == UDS_LEV_RCTP_STR) {
@@ -287,9 +335,6 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
     case UDS_EVT_RequestDownload: {
         UDSRequestDownloadArgs_t *a = (UDSRequestDownloadArgs_t *)arg;
         uint32_t addr = (uint32_t)(uintptr_t)a->addr;
-        if (!bl_uds_reprogramming_allowed(srv)) {
-            return UDS_NRC_SecurityAccessDenied;
-        }
         /* The image may only land inside the staging slot. */
         if (addr < BL_UDS_DL_BASE ||
             a->size == 0U ||
@@ -341,8 +386,11 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         return UDS_PositiveResponse;
 
     /* Housekeeping notifications - no request to answer. */
-    case UDS_EVT_Err:
     case UDS_EVT_SessionTimeout:
+        bl_uds_forget_session_state();   /* the library has already dropped session and unlock */
+        return UDS_PositiveResponse;
+
+    case UDS_EVT_Err:
         return UDS_PositiveResponse;
 
     /* Services not implemented in this build yet. */
@@ -361,8 +409,13 @@ void BL_UDS_Init(void)
     g_tp.hdl.send = bl_uds_tp_send;
     g_tp.hdl.recv = bl_uds_tp_recv;
     g_tp.hdl.poll = bl_uds_tp_poll;
-    g_tp.link     = &g_link;
-    g_tp.rx_id    = BL_UDS_ID_REQUEST;
+    isotp_init_link(&g_link_func, BL_UDS_ID_REPLY,
+                    g_link_func_tx, sizeof(g_link_func_tx),
+                    g_link_func_rx, sizeof(g_link_func_rx));
+    g_tp.link[0]  = &g_link;
+    g_tp.rx_id[0] = BL_UDS_ID_REQUEST;
+    g_tp.link[1]  = &g_link_func;
+    g_tp.rx_id[1] = BL_UDS_ID_FUNCTIONAL;
 
     UDSServerInit(&g_srv);
     BL_SecInit(&g_sec, UDSMillis());
@@ -427,16 +480,46 @@ int BL_UDS_SelfTest(void)
 
     BL_ISOTP_SwArm(links, rx_ids, 2);
 
-    /* 1) DiagnosticSessionControl -> programming session. */
+    /* The library answers SecurityAccess with 0x37 for its first second; wait that out so the
+       checks below see the session rules and not the boot delay. */
+    while ((int32_t)(UDSMillis() - g_srv.sec_access_boot_delay_timer) <= 0) {
+        /* spin: ~1 s of real time on target; advances the tick on host */
+    }
+
+    /* 0) The rules first. In the default session SecurityAccess is not available (0x7F), and
+          the programming session can not be entered directly (0x22). */
+    req[0] = 0x27U;
+    req[1] = 0x01U;
+    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
+    if (n < 3U || resp[0] != 0x7FU || resp[1] != 0x27U || resp[2] != 0x7FU) {
+        rc = 20;   /* SecurityAccess was not refused in the default session */
+        goto done;
+    }
     req[0] = 0x10U;
     req[1] = UDS_LEV_DS_PRGS;
+    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
+    if (n < 3U || resp[0] != 0x7FU || resp[1] != 0x10U || resp[2] != 0x22U) {
+        rc = 21;   /* default -> programming was not refused */
+        goto done;
+    }
+
+    /* 1) DiagnosticSessionControl: extended first, then programming. */
+    req[0] = 0x10U;
+    req[1] = UDS_LEV_DS_EXTDS;
     n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
     if (n == 0U) {
         rc = 1;   /* no response at all -> transport/server stalled */
         goto done;
     }
+    if (n < 2U || resp[0] != 0x50U || resp[1] != UDS_LEV_DS_EXTDS) {
+        rc = 2;   /* extended session not accepted */
+        goto done;
+    }
+    req[0] = 0x10U;
+    req[1] = UDS_LEV_DS_PRGS;
+    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
     if (n < 2U || resp[0] != 0x50U || resp[1] != UDS_LEV_DS_PRGS) {
-        rc = 2;   /* session control not accepted */
+        rc = 2;   /* programming session not accepted */
         goto done;
     }
 

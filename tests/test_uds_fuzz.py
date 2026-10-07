@@ -22,7 +22,7 @@ from virtual_ecu import VirtualEcu, STAGING_SIZE
 
 # The only negative response codes this server is allowed to emit. Anything else
 # coming back is itself a finding.
-VALID_NRC = {0x11, 0x12, 0x13, 0x24, 0x31, 0x33, 0x35, 0x36, 0x72}
+VALID_NRC = {0x11, 0x12, 0x13, 0x22, 0x24, 0x31, 0x33, 0x35, 0x36, 0x72, 0x7F}
 
 
 def assert_wellformed(pdu, resp):
@@ -65,6 +65,7 @@ def test_fuzz_mutated_valid_sequence():
     # server must still only ever answer with well-formed responses.
     rng = random.Random(0x1234)
     steps = [
+        [0x10, 0x03],
         [0x10, 0x02],
         [0x27, 0x01],
         [0x27, 0x02, 0, 0, 0, 0],

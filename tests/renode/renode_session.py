@@ -223,7 +223,7 @@ class RenodeSession:
 
     def power_cycle(self, hold_b1=True, settle=1.5):
         """A real power loss: RAM is lost, flash is kept, everything restarts."""
-        self.cmd("sram FillWithConstantByte 0")
+        self.cmd("sram ZeroAll")
         self.cmd("cpu IsHalted false")
         self.cmd("sysbus WriteDoubleWord 0x%X 0xFFFFFFFF" % (self.FLASH_CTL + 0x104))
         self.cmd("sysbus WriteDoubleWord 0x%X 0xFFFFFFFF" % (self.FLASH_CTL + 0x114))

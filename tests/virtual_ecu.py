@@ -34,6 +34,38 @@ MAX_BLOCK = 128                             # maxNumberOfBlockLength
 SESSION_DEFAULT = 0x01
 SESSION_PROGRAMMING = 0x02
 SESSION_EXTENDED = 0x03
+SESSION_SAFETY = 0x04
+
+# Which session may move to which. Programming and safety are only reached through the
+# extended session and only leave to default. Keep in step with bl_udspolicy.c (the C and
+# this table are compared in tests/test_udspolicy.py).
+SESSION_CHANGES = {
+    SESSION_DEFAULT:     {SESSION_DEFAULT, SESSION_EXTENDED},
+    SESSION_EXTENDED:    {SESSION_DEFAULT, SESSION_EXTENDED, SESSION_PROGRAMMING, SESSION_SAFETY},
+    SESSION_PROGRAMMING: {SESSION_DEFAULT, SESSION_PROGRAMMING},
+    SESSION_SAFETY:      {SESSION_DEFAULT, SESSION_SAFETY},
+}
+
+ALL_SESSIONS = {SESSION_DEFAULT, SESSION_PROGRAMMING, SESSION_EXTENDED, SESSION_SAFETY}
+PHYSICAL, FUNCTIONAL = "physical", "functional"
+BOTH = {PHYSICAL, FUNCTIONAL}
+
+# service id -> (sessions it works in, security level it needs, addressing it accepts).
+# Keep in step with the table in bl_udspolicy.c.
+SERVICES = {
+    0x10: (ALL_SESSIONS, 0, BOTH),                                           # DiagnosticSessionControl
+    0x11: (ALL_SESSIONS, 0, BOTH),                                           # ECUReset
+    0x22: (ALL_SESSIONS, 0, BOTH),                                           # ReadDataByIdentifier
+    0x23: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # ReadMemoryByAddress
+    0x27: ({SESSION_PROGRAMMING, SESSION_EXTENDED, SESSION_SAFETY}, 0, {PHYSICAL}),   # SecurityAccess
+    0x28: ({SESSION_EXTENDED}, 0, BOTH),                                     # CommunicationControl
+    0x31: ({SESSION_PROGRAMMING, SESSION_EXTENDED}, 0, {PHYSICAL}),          # RoutineControl
+    0x34: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # RequestDownload
+    0x36: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # TransferData
+    0x37: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # RequestTransferExit
+    0x3E: (ALL_SESSIONS, 0, BOTH),                                           # TesterPresent
+    0x85: ({SESSION_EXTENDED, SESSION_PROGRAMMING}, 0, BOTH),                # ControlDTCSetting
+}
 
 # Routines
 RID_ERASE = 0xFF00
@@ -48,6 +80,8 @@ NRC_SECURITY_ACCESS_DENIED = 0x33
 NRC_INVALID_KEY = 0x35
 NRC_EXCEEDED_ATTEMPTS = 0x36
 NRC_REQUEST_SEQUENCE_ERROR = 0x24
+NRC_CONDITIONS_NOT_CORRECT = 0x22
+NRC_NOT_IN_ACTIVE_SESSION = 0x7F
 
 # After this many bad keys the server locks the level, matching the iso14229
 # attempt limiter. Modelled here so the suite can exercise the 0x36 path.
@@ -97,16 +131,41 @@ class VirtualEcu:
 
     # -- entry point ----------------------------------------------------------
 
-    def request(self, pdu):
-        """Take a UDS request PDU (bytes), return the response PDU (bytes)."""
+    def gate(self, sid, functional=False):
+        """The NRC a request is refused with before the service looks at it, or 0."""
+        row = SERVICES.get(sid)
+        if row is None:
+            return NRC_SERVICE_NOT_SUPPORTED
+        sessions, min_security, addressing = row
+        if (FUNCTIONAL if functional else PHYSICAL) not in addressing:
+            return NRC_SERVICE_NOT_SUPPORTED
+        if self.session not in sessions:
+            return NRC_NOT_IN_ACTIVE_SESSION
+        if (SEC_LEVEL if self.unlocked else 0) < min_security:
+            return NRC_SECURITY_ACCESS_DENIED
+        return 0
+
+    def s3_timeout(self):
+        """The tester has been silent for 5 s: back to default and locked."""
+        self._leave_session(SESSION_DEFAULT)
+
+    def _leave_session(self, session):
+        self.session = session
+        self.unlocked = False        # a new session always starts locked
+        self.seed = None
+        self.dl_addr = None
+
+    def request(self, pdu, functional=False):
+        """Take a UDS request PDU (bytes), return the response PDU (bytes), or None when a
+        functional request is refused (functional requests are answered only when accepted)."""
         if not pdu:
             return self._neg(0x00, NRC_SERVICE_NOT_SUPPORTED)
 
         sid = pdu[0]
-        handler = self._handlers.get(sid)
-        if handler is None:
-            return self._neg(sid, NRC_SERVICE_NOT_SUPPORTED)
-        return handler(self, pdu)
+        nrc = self.gate(sid, functional)
+        if nrc:
+            return None if functional else self._neg(sid, nrc)
+        return self._handlers[sid](self, pdu)
 
     # -- services -------------------------------------------------------------
 
@@ -114,9 +173,11 @@ class VirtualEcu:
         if len(pdu) < 2:
             return self._neg(0x10, NRC_INCORRECT_LENGTH)
         sub = pdu[1]
-        if sub not in (SESSION_DEFAULT, SESSION_PROGRAMMING, SESSION_EXTENDED):
+        if sub not in SESSION_CHANGES:
             return self._neg(0x10, NRC_SUBFUNCTION_NOT_SUPPORTED)
-        self.session = sub
+        if sub not in SESSION_CHANGES[self.session]:
+            return self._neg(0x10, NRC_CONDITIONS_NOT_CORRECT)
+        self._leave_session(sub)
         # Positive reply carries the P2/P2* timing record; the firmware lets the
         # library fill it in. We echo four representative bytes.
         return bytes([0x50, sub, 0x00, 0x32, 0x01, 0xF4])
@@ -229,7 +290,18 @@ class VirtualEcu:
             return self._neg(0x85, NRC_INCORRECT_LENGTH)
         return bytes([0xC5, pdu[1]])
 
+    def _read_data_by_identifier(self, pdu):
+        # The server has no data identifiers of its own: the library answers 0x11.
+        return self._neg(0x22, NRC_SERVICE_NOT_SUPPORTED)
+
+    def _tester_present(self, pdu):
+        if len(pdu) < 2:
+            return self._neg(0x3E, NRC_INCORRECT_LENGTH)
+        return bytes([0x7E, pdu[1] & 0x7F])
+
     _handlers = {
+        0x22: _read_data_by_identifier,
+        0x3E: _tester_present,
         0x10: _diagnostic_session_control,
         0x27: _security_access,
         0x31: _routine_control,

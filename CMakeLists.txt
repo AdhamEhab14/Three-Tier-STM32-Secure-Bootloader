@@ -39,7 +39,8 @@ function(fw target dir startup ld)
     target_include_directories(${target}.elf PRIVATE ${dir}/${inc})
   endforeach()
 
-  target_compile_definitions(${target}.elf PRIVATE USE_HAL_DRIVER STM32F103xB)
+  # same symbols the CubeIDE project defines (it adds DEBUG only to its Debug configuration)
+  target_compile_definitions(${target}.elf PRIVATE USE_HAL_DRIVER STM32F103xB $<$<CONFIG:Debug>:DEBUG>)
 
   set(cpu -mcpu=cortex-m3 -mthumb)
   target_compile_options(${target}.elf PRIVATE ${cpu}
@@ -64,7 +65,12 @@ fw(boot_manager  BootManager                       startup_stm32f103rbtx.s STM32
 fw(fbl           STM32F103RBT6_Secure_Bootloader   startup_stm32f103rbtx.s STM32F103RBTX_FLASH.ld
                  Core/ThirdParty/isotp-c Core/ThirdParty/iso14229)
 # iso14229 asks the integrator to name the platform; this is its documented default.
-target_compile_definitions(fbl.elf PRIVATE UDS_SYS=UDS_SYS_CUSTOM)
+target_compile_definitions(fbl.elf PRIVATE UDS_SYS=UDS_SYS_CUSTOM
+                           UDS_SERVER_RECV_BUF_SIZE=256 UDS_SERVER_SEND_BUF_SIZE=256)   # as in the Cube project
+option(BL_UDS_SELFTEST "Boot into the iso14229 server's on-chip self-test instead of the bootloader (LD2 solid = pass)" OFF)
+if(BL_UDS_SELFTEST)
+  target_compile_definitions(fbl.elf PRIVATE BL_UDS_SELFTEST_ON_BOOT=1)
+endif()
 if(BL_TEST_KEYS)
   target_compile_definitions(fbl.elf PRIVATE BL_TEST_KEYS)
   target_include_directories(fbl.elf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/keys)
@@ -90,4 +96,18 @@ if(BP_UDS_CLIENT)
   elseif(BL_SEC_KEY_HEADER)
     target_compile_definitions(bluepill_bridge.elf PRIVATE "BL_SEC_KEY_HEADER=\"${_sec_key_header}\"")
   endif()
+endif()
+
+# Strict checking of the hand-written sources (not the generated Cube code, the HAL or the vendored
+# libraries): extra warnings as errors, and GCC's static analyzer.
+option(BL_STRICT "Strict warnings as errors and -fanalyzer on our own sources" OFF)
+if(BL_STRICT)
+  set(_core ${CMAKE_CURRENT_SOURCE_DIR}/STM32F103RBT6_Secure_Bootloader/Core/Src)
+  set(_own
+    ${_core}/bootloader.c ${_core}/bl_uds.c ${_core}/bl_isotp.c ${_core}/bl_secaccess.c
+    ${_core}/bl_seccrypto.c ${_core}/bl_udspolicy.c ${_core}/can_bl.c ${_core}/flash.c
+    ${_core}/flash_if.c ${_core}/sbl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/BootManager/Core/Src/main.c)
+  set_source_files_properties(${_own} PROPERTIES COMPILE_OPTIONS
+    "-Wextra;-Wshadow;-Wpointer-arith;-Wcast-align;-Wstrict-prototypes;-Wformat=2;-fanalyzer;-Werror")
 endif()

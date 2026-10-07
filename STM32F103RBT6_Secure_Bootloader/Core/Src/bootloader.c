@@ -16,6 +16,7 @@
 #include "usart.h"      /* huart2 */
 #include "bl_seccrypto.h"
 #include "bl_secaccess.h"
+#include "bl_udspolicy.h"
 #include "crc.h"        /* hcrc   */
 #include "flash_if.h"   /* FlashIf_ErasePages / FlashIf_Write */
 #include "tweetnacl.h"  /* crypto_hash + crypto_sign_open      */
@@ -395,17 +396,39 @@ static void BL_Handle_GetVersion(void)
     BL_ReplyData(4U, ver);
 }
 
+/*
+ * ERASE and WRITE only reach the staging slot. Everything else (the app, the FBL, the
+ * metadata, the Boot Manager) changes through VERIFY / UPDATE_FBL, which authenticate the
+ * image first; a raw write there would bypass that. The subtraction form avoids overflow.
+ */
+#define SLOT_B_END  (SLOT_B_BASE + FBL_REGION_SIZE)
+
+static int BL_InStaging(uint32_t addr, uint32_t len)
+{
+    return addr >= SLOT_B_BASE && addr <= SLOT_B_END && len <= (SLOT_B_END - addr);
+}
+
 static void BL_Handle_Erase(void)      /* [addr:4][num_pages:1] */
 {
     uint32_t addr   = BL_ReadU32(&bl_rx[2]);
     uint32_t npages = bl_rx[6];
+    if ((addr % 1024U) != 0U || !BL_InStaging(addr, npages * 1024U)) {
+        BL_ReplyByte(0U);
+        return;
+    }
     BL_ReplyByte(FlashIf_ErasePages(addr, npages) ? 1U : 0U);
 }
 
 static void BL_Handle_Write(void)      /* [addr:4][len:1][data:len] */
 {
-    uint32_t addr = BL_ReadU32(&bl_rx[2]);
-    uint8_t  len  = bl_rx[6];
+    uint32_t addr  = BL_ReadU32(&bl_rx[2]);
+    uint32_t len   = bl_rx[6];
+    /* what the frame really carries: LEN minus cmd, addr, len byte and CRC */
+    uint32_t avail = ((uint32_t)bl_rx[0] >= 10U) ? (uint32_t)bl_rx[0] - 10U : 0U;
+    if ((addr & 1U) != 0U || len > avail || !BL_InStaging(addr, len)) {
+        BL_ReplyByte(0U);
+        return;
+    }
     BL_ReplyByte(FlashIf_Write(addr, &bl_rx[7], len) ? 1U : 0U);
 }
 
@@ -575,9 +598,10 @@ static void BL_Handle_LockBm(void)
  * over any transport and reuses the framing + crypto we already have. A request
  * is [SID][params]; a positive reply is [SID+0x40][data], a negative reply is
  * [0x7F][SID][NRC]. The flashing flow is the canonical one:
- *   0x10 programming session -> 0x27 seed/key unlock -> 0x34 request download ->
- *   0x36 transfer data (into Slot B) -> 0x37 exit -> 0x31 install routine (runs
- *   our signed verify + promote) -> 0x11 ECU reset.
+ *   0x10 extended session -> 0x10 programming session -> 0x27 seed/key unlock ->
+ *   0x34 request download -> 0x36 transfer data (into Slot B) -> 0x37 exit ->
+ *   0x31 install routine (runs our signed verify + promote) -> 0x11 ECU reset.
+ * Which session may move to which, and what each service needs, is in bl_udspolicy.c.
  */
 #define UDS_POS               0x40U
 #define UDS_NEG               0x7FU
@@ -594,19 +618,21 @@ static void BL_Handle_LockBm(void)
 #define NRC_SERVICE_NOT_SUPP  0x11U
 #define NRC_SUBFUNC_NOT_SUPP  0x12U
 #define NRC_INVALID_LENGTH    0x13U
+#define NRC_CONDITIONS        0x22U
 #define NRC_SEQUENCE          0x24U
 #define NRC_OUT_OF_RANGE      0x31U
 #define NRC_SECURITY_DENIED   0x33U
 #define NRC_INVALID_KEY       0x35U
 #define NRC_PROG_FAILURE      0x72U
 
-#define SESSION_DEFAULT       0x01U
-#define SESSION_PROGRAMMING   0x02U
-#define SESSION_EXTENDED      0x03U
+#define SESSION_DEFAULT       BL_SESS_DEFAULT
+#define SESSION_PROGRAMMING   BL_SESS_PROGRAMMING
+#define SESSION_EXTENDED      BL_SESS_EXTENDED
 
 #define UDS_MAX_BLOCK         128U       /* max TransferData payload */
 
 static uint8_t  uds_session = SESSION_DEFAULT;
+static uint32_t uds_last_ms;            /* when the last request came in, for the S3 timeout */
 static uint8_t  uds_unlocked;
 static uint8_t  uds_seed[4];            /* seed handed out, awaiting its key */
 static uint8_t  uds_seed_valid;         /* a seed is good for exactly one sendKey */
@@ -636,7 +662,7 @@ static uint32_t uds_nrc(uint8_t *resp, uint8_t sid, uint8_t nrc)
     return 3U;
 }
 
-static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
+static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
 {
     uint8_t sid;
     if (len < 1U) return 0U;
@@ -651,10 +677,14 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
 
     case UDS_SESSION: {
         uint8_t sub = (len >= 2U) ? (req[1] & 0x7FU) : 0U;
-        if (sub != SESSION_DEFAULT && sub != SESSION_PROGRAMMING && sub != SESSION_EXTENDED)
+        if (!BL_UdsSessionKnown(sub))
             return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
+        if (!BL_UdsSessionChangeAllowed(uds_session, sub))
+            return uds_nrc(resp, sid, NRC_CONDITIONS);
         uds_session  = sub;
         uds_unlocked = 0U;                 /* a session change always re-locks */
+        uds_seed_valid = 0U;
+        uds_dl_addr = 0U; uds_dl_remaining = 0U;   /* and drops a download in progress */
         resp[0] = sid + UDS_POS; resp[1] = sub;
         resp[2] = 0x00; resp[3] = 0x32;    /* P2 = 50 ms    */
         resp[4] = 0x01; resp[5] = 0xF4;    /* P2* = 5000 ms */
@@ -808,6 +838,34 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
 
     default:
         return uds_nrc(resp, sid, NRC_SERVICE_NOT_SUPP);
+    }
+}
+
+/* Every request goes through the same gate first: the service has to exist, accept this
+   addressing, work in the active session and have enough security. Requests here arrive
+   inside a framed command, so the addressing is always physical. */
+static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
+{
+    uint8_t gate;
+    uint32_t n;
+
+    if (len < 1U) return 0U;
+    uds_last_ms = HAL_GetTick();
+    gate = BL_UdsGate(req[0], uds_session, uds_unlocked ? 1U : 0U, BL_ADDR_PHYSICAL);
+    n = gate ? uds_nrc(resp, req[0], gate) : uds_dispatch(req, len, resp);
+    uds_last_ms = HAL_GetTick();           /* a verify takes seconds and must not count towards S3 */
+    return n;
+}
+
+/* S3: a tester that goes quiet in a non-default session is dropped back to default, locked. */
+static void uds_s3_poll(void)
+{
+    if (uds_session != SESSION_DEFAULT && (HAL_GetTick() - uds_last_ms) > BL_SESSION_TIMEOUT_MS)
+    {
+        uds_session = SESSION_DEFAULT;
+        uds_unlocked = 0U;
+        uds_seed_valid = 0U;
+        uds_dl_addr = 0U; uds_dl_remaining = 0U;
     }
 }
 
@@ -1052,6 +1110,7 @@ void BL_Run(void)
            wait indefinitely for a new upload) doesn't reset every ~2 s. Writing
            the refresh key is a no-op when the IWDG was never started. */
         IWDG->KR = 0xAAAAU;
+        uds_s3_poll();
 
         /* Drop a stale overrun so the next frame re-syncs from its start byte. */
         if (__HAL_UART_GET_FLAG(BL_HOST_UART, UART_FLAG_ORE)) __HAL_UART_CLEAR_OREFLAG(BL_HOST_UART);
