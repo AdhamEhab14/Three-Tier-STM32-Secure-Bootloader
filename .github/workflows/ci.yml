@@ -4,6 +4,9 @@
 #                  the .bin files as a build artifact.
 #   emulator     - boots the real Boot Manager + FBL in Renode and drives them
 #                  with the real host tool (signed install, anti-rollback, tamper).
+#   powercut     - cuts power at each kind of flash operation during an FBL self-update
+#                  and an app install, and checks the device recovers and the
+#                  rollback floor holds.
 #   diagnostics  - off-target checks: ODX validation, the UDS conformance
 #                  suite (against the host model) and one run over a virtual
 #                  CAN bus.
@@ -76,7 +79,51 @@ jobs:
           RENODE_PATH: ${{ github.workspace }}/../../../renode/renode
         run: |
           export RENODE_PATH="$HOME/renode/renode"
-          python -m pytest tests/renode -v
+          python -m pytest tests/renode -v -m "not powercut"
+
+  powercut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz             | tar xz -C ~/renode --strip-components=1
+
+      - name: Build firmware with the published TEST keys
+        run: |
+          cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+          cmake --build build-test
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pynacl pyserial
+
+      - name: Pull the plug at every kind of flash operation
+        env:
+          RENODE_PATH: ${{ github.workspace }}/../../../renode/renode
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          python -m pytest tests/renode -v -m powercut
 
   diagnostics:
     runs-on: ubuntu-latest

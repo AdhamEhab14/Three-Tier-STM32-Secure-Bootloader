@@ -133,6 +133,27 @@ None of these change the core stance: trust is anchored in the off-device privat
 worst a physical attacker gets is a board running their own code — which no MCU can prevent —
 not the ability to forge firmware for the fleet.
 
+## Power-loss safety
+
+Flash writes are not atomic, so the bootloader has to survive a power cut at any point
+of an update. This is tested on the real firmware in an emulator (no hardware needed):
+the flash model numbers every erase and program, stops the CPU at a chosen one, and the
+resulting flash image is booted again. Cut states for every other point are generated
+offline and only trusted because a real cut reproduces them byte for byte.
+
+| Update step | What a cut leaves behind | How the device recovers |
+|---|---|---|
+| FBL self-update, any point after the update is recorded | old, half-erased or half-copied FBL, new image still in Slot B | the Boot Manager re-copies Slot B into the FBL region (safe to repeat) |
+| App install, erase or copy of Slot A | damaged app, old metadata record still in force | the app is refused, the self-test no longer halts, the bootloader stays up for a reinstall |
+| App install, metadata rewrite | old record, or a half-written new one | metadata lives in two pages and only the page that is not current is rewritten, so the rollback floor is never lost |
+
+Run them with `cd tests/renode && python -m pytest -m powercut` (about 20 to 35 minutes;
+`BL_THOROUGH=1` adds a denser sweep). Limits: a torn operation is modelled as an erase
+that leaves the old, half-erased or garbage page, and a program as completed or not
+started per halfword; a bit-level torn program is not modelled. If Slot B itself is
+damaged while an FBL update is pending there is nothing left to recover from without a
+golden image (listed under future work).
+
 ## Building and running
 
 To build from the command line you need `arm-none-eabi-gcc`, CMake and Ninja:
