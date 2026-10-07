@@ -17,7 +17,7 @@
 #define APP_MAX_SIZE    (28U * 1024U) /* size reserved for the application    */
 #define SLOT_B_BASE     0x08015000U   /* staging slot: new image lands here first */
 #define CONFIG_ADDR     0x0801FC00U   /* last 1 KB page: application metadata, slot 0 */
-#define CONFIG_ALT_ADDR 0x0801F800U   /* application metadata, slot 1 (never both rewritten at once) */
+#define CONFIG_ALT_ADDR 0x0801F800U   /* application metadata, slot 1 */
 #define APP_META_MAGIC  0x600DF00DU   /* "a valid app is present" marker       */
 #define BL_SIG_LEN      64U           /* Ed25519 signature length              */
 
@@ -45,12 +45,15 @@ typedef struct {
 } app_meta_t;
 
 /*
- * The record lives in two flash pages (CONFIG_ADDR and CONFIG_ALT_ADDR). An install
- * only ever erases and rewrites the page that is NOT the current record, so a power
- * cut at any point leaves the previous record intact and the rollback floor cannot
- * be lost. Meta_Current() returns the valid record with the highest seq, or NULL.
+ * The record is kept in two pages, CONFIG_ADDR and CONFIG_ALT_ADDR. An install only erases
+ * and rewrites the page that is not current, so a power cut can never take the old record
+ * (and the rollback floor with it). Meta_Current() is the valid record with the highest
+ * seq, or NULL when there is none.
  */
 const app_meta_t *Meta_Current(void);
+
+/* Starts the SecurityAccess clock and the cycle counter. Once, at start-up. */
+void BL_SecurityInit(void);
 uint32_t Meta_Floor(void);          /* version of the current record, 0 if none */
 
 /*

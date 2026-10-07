@@ -179,8 +179,11 @@ static_assert((0 < UDS_SERVER_DEFAULT_P2_MS) &&
 #endif
 
 /// Amount of time to wait after an authentication failure before accepting another 0x27 request.
+/* LOCAL CHANGE (see ../UPSTREAM.md): the bootloader sets this wait, longer after
+   several wrong keys. Implemented in bl_uds.c. */
+uint32_t BL_UdsFailDelayMs(void);
 #ifndef UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_AUTH_FAIL_DELAY_MS
-#define UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_AUTH_FAIL_DELAY_MS (1000)
+#define UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_AUTH_FAIL_DELAY_MS (BL_UdsFailDelayMs())
 #endif
 
 #ifndef UDS_SERVER_DEFAULT_XFER_DATA_MAX_BLOCKLENGTH

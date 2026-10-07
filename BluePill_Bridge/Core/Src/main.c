@@ -301,6 +301,7 @@ static int forward_i2c(const uint8_t *cmd, uint32_t total, uint8_t *reply, uint3
 }
 
 #if BP_UDS_CLIENT_ON_BOOT
+#include "bl_seccrypto.h"   /* from the FBL project: add Core/Src/bl_seccrypto.c (CMake: -DBP_UDS_CLIENT=ON does this) */
 /* ==========================================================================
  *  UDS client (two-board test): drive the Nucleo's iso14229 server over CAN.
  *  Requests go out on 0x7E0 (multi-frame handled by bp_cantp_send); the server's
@@ -366,12 +367,10 @@ static void bp_uds_report(int code)
 static void bp_uds_client(void)
 {
   const uint32_t SLOT_B = 0x08015000U;                 /* staging slot base (matches the FBL map) */
-  static const uint8_t secret[4] = { 0x19U, 0x84U, 0xC0U, 0xDEU };
   uint8_t  req[16];
   uint8_t  resp[16];
   uint8_t  seed[4], key[4];
   uint32_t n;
-  int      i;
 
   HAL_Delay(300);   /* let the server settle after power-up */
 
@@ -399,8 +398,9 @@ static void bp_uds_client(void)
   if (n < 6U || resp[0] != 0x67U || resp[1] != 0x01U) bp_uds_report(3);
   seed[0] = resp[2]; seed[1] = resp[3]; seed[2] = resp[4]; seed[3] = resp[5];
 
-  /* 3) SecurityAccess sendKey (key = seed XOR shared secret). */
-  for (i = 0; i < 4; i++) key[i] = (uint8_t)(seed[i] ^ secret[i]);
+  /* 3) SecurityAccess sendKey: first 4 bytes of AES-CMAC(K, seed). K is the same key the
+     server was built with (the public demo key unless BL_SEC_KEY_HEADER was given). */
+  BL_Sec_KeyForSeed(seed, key);
   bp_log_hex("    seed from server", seed, 4U);
   bp_log_hex("    computed key    ", key, 4U);
   req[0] = 0x27U; req[1] = 0x02U;

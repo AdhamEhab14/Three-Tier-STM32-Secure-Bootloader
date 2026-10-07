@@ -14,6 +14,8 @@
 #include <string.h>     /* memcpy / memcmp */
 #include "bootloader.h"
 #include "usart.h"      /* huart2 */
+#include "bl_seccrypto.h"
+#include "bl_secaccess.h"
 #include "crc.h"        /* hcrc   */
 #include "flash_if.h"   /* FlashIf_ErasePages / FlashIf_Write */
 #include "tweetnacl.h"  /* crypto_hash + crypto_sign_open      */
@@ -359,17 +361,16 @@ int BIST_Run(bist_result_t *out)
     int crc_ok = BIST_CrcEngine();
 
     g_bist.ram_ok   = (uint8_t)BIST_RamMarch();
-    /* flash_ok is what the BIST command reports: the CRC engine works AND the
-       installed app, if there is one, still matches its recorded CRC. */
+    /* what the BIST command reports: CRC engine fine, and the app (if any) still matches its CRC */
     g_bist.flash_ok = (uint8_t)(crc_ok &&
                                 (Meta_Current() == (const app_meta_t *)0 || BootMgr_AppValid()));
     g_bist.vdd_mv   = BIST_ReadVdd_mv(&vok);
     g_bist.vdd_ok   = (uint8_t)(vok && g_bist.vdd_mv >= 2700U && g_bist.vdd_mv <= 3600U);
 
     if (out) *out = g_bist;
-    /* Only a broken RAM or CRC engine is fatal. A damaged application image is not:
-       recovering from that (an interrupted install, say) is the bootloader's job, and
-       BootMgr_JumpToApp already refuses to launch it. VDD is advisory. */
+    /* Only broken RAM or a broken CRC engine is fatal. A damaged app (an interrupted install,
+       say) is exactly what the bootloader is here to fix, and BootMgr_JumpToApp already
+       refuses to start it. VDD is advisory. */
     return (g_bist.ram_ok && crc_ok) ? 1 : 0;
 }
 
@@ -476,8 +477,8 @@ static int BL_InstallApp(const uint8_t *hdr_and_sig)
     meta.version = hdr.fw_version;
     meta.seq     = cur ? (cur->seq + 1U) : 1U;
     meta.check   = Meta_CheckWord(&meta);
-    /* Rewrite only the non-current page: until the last word below is programmed the
-       previous record (and with it the rollback floor) is still the one in force. */
+    /* Only the non-current page is touched: the old record, and the floor with it, stays
+       valid until the last word of the new one is programmed. */
     if (FlashIf_ErasePages(target, 1U) &&
         FlashIf_Write(target, (const unsigned char *)&meta, sizeof(meta))) {
         BootTrial_Begin();   /* new app is on trial until it confirms itself */
@@ -603,22 +604,30 @@ static void BL_Handle_LockBm(void)
 #define SESSION_PROGRAMMING   0x02U
 #define SESSION_EXTENDED      0x03U
 
-#define UDS_KEY_SECRET        0x5A3C96E1U
 #define UDS_MAX_BLOCK         128U       /* max TransferData payload */
 
 static uint8_t  uds_session = SESSION_DEFAULT;
 static uint8_t  uds_unlocked;
-static uint32_t uds_seed;
+static uint8_t  uds_seed[4];            /* seed handed out, awaiting its key */
+static uint8_t  uds_seed_valid;         /* a seed is good for exactly one sendKey */
+static bl_sec_t uds_sec;                /* SecurityAccess brute-force policy */
 static uint32_t uds_dl_addr;
 static uint32_t uds_dl_remaining;
 static uint8_t  uds_bsc;                 /* expected block sequence counter */
 static uint8_t  bl_uds_reset_pending;
 
-/* Demo seed->key transform. A real ECU keeps this secret; both ends share it. */
-static uint32_t uds_key_from_seed(uint32_t seed)
+/* Finer than the ms tick; only used to make seeds differ between power-ups. */
+static uint32_t uds_cycles(void)
 {
-    uint32_t k = (seed << 3) | (seed >> 29);   /* rotate left 3 */
-    return k ^ UDS_KEY_SECRET;
+    return DWT->CYCCNT;
+}
+
+void BL_SecurityInit(void)
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    BL_SecInit(&uds_sec, HAL_GetTick());
 }
 
 static uint32_t uds_nrc(uint8_t *resp, uint8_t sid, uint8_t nrc)
@@ -654,26 +663,47 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
 
     case UDS_SECURITY: {
         uint8_t sub = (len >= 2U) ? req[1] : 0U;
+        uint8_t gate;
+
+        if (sub != 0x01U && sub != 0x02U)
+            return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
+
+        /* boot delay (0x37) and the wrong-key wait or lockout (0x36) cover both steps */
+        gate = BL_SecGate(&uds_sec, HAL_GetTick());
+        if (gate != 0U)
+            return uds_nrc(resp, sid, gate);
+
         if (sub == 0x01U) {                /* requestSeed */
-            uds_seed = uds_unlocked ? 0U : ((HAL_GetTick() * 2654435761U) | 1U);
             resp[0] = sid + UDS_POS; resp[1] = sub;
-            resp[2] = (uint8_t)(uds_seed >> 24); resp[3] = (uint8_t)(uds_seed >> 16);
-            resp[4] = (uint8_t)(uds_seed >> 8);  resp[5] = (uint8_t)uds_seed;
+            if (uds_unlocked) {            /* already unlocked: an all-zero seed says so */
+                resp[2] = resp[3] = resp[4] = resp[5] = 0U;
+                uds_seed_valid = 0U;
+            } else {
+                BL_Sec_MakeSeed(uds_seed, BL_SecNextCounter(&uds_sec), HAL_GetTick(), uds_cycles());
+                uds_seed_valid = 1U;
+                resp[2] = uds_seed[0]; resp[3] = uds_seed[1];
+                resp[4] = uds_seed[2]; resp[5] = uds_seed[3];
+            }
             return 6U;
         }
-        if (sub == 0x02U) {                /* sendKey */
-            uint32_t key;
-            if (len < 6U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
-            key = ((uint32_t)req[2] << 24) | ((uint32_t)req[3] << 16)
-                | ((uint32_t)req[4] << 8) | req[5];
-            if (uds_seed != 0U && key == uds_key_from_seed(uds_seed)) {
-                uds_unlocked = 1U; uds_seed = 0U;
+
+        /* sendKey */
+        {
+            uint8_t expect[4];
+            int ok;
+            if (len != 6U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+            BL_Sec_KeyForSeed(uds_seed, expect);
+            ok = uds_seed_valid && BL_Sec_Equal(&req[2], expect, 4U);
+            uds_seed_valid = 0U;           /* one attempt per seed */
+            if (ok) {
+                uds_unlocked = 1U;
+                BL_SecNoteSuccess(&uds_sec);
                 resp[0] = sid + UDS_POS; resp[1] = sub;
                 return 2U;
             }
+            BL_SecNoteFail(&uds_sec, HAL_GetTick());
             return uds_nrc(resp, sid, NRC_INVALID_KEY);
         }
-        return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
     }
 
     case UDS_RDBI: {
@@ -1003,6 +1033,7 @@ done:
 /* ---- transport loop: USART2, USART1, CAN, SPI2, and I2C1 (all at once) ---- */
 void BL_Run(void)
 {
+    BL_SecurityInit();   /* SecurityAccess policy clock + cycle counter */
     CAN_BL_Init();   /* real CAN bus (CAN_BL_LOOPBACK = 0) + accept-all filter + start */
     SPI2_SlaveInit();/* SPI slave transport for the Blue Pill bridge */
     I2C1_SlaveInit();/* I2C slave transport for the Blue Pill bridge */

@@ -30,3 +30,10 @@ User callbacks the firmware must provide (declared in isotp_user.h):
   firmware's own glue files under Core/Src, not inside these folders.
 - To update: re-copy the listed files from the pinned commit above (or a newer
   one) and update the commit hashes here.
+
+## Local changes to vendored code
+
+- `iso14229/iso14229.h`: the delay after a wrong SecurityAccess key
+  (`UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_AUTH_FAIL_DELAY_MS`) is a call to
+  `BL_UdsFailDelayMs()` (in `bl_uds.c`) instead of a constant, so the bootloader can lock
+  out for 10 s after 3 wrong keys. Re-apply this when updating the library.

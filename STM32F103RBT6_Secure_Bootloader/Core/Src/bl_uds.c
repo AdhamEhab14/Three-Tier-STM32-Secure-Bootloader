@@ -14,6 +14,8 @@
 #include "can.h"        /* hcan */
 #include "isotp.h"      /* isotp_send / isotp_receive / isotp_init_link */
 #include "iso14229.h"   /* UDS server + UDSTp transport interface */
+#include "bl_seccrypto.h"
+#include "bl_secaccess.h"
 #include <string.h>
 
 /* UDS addressing: requester -> FBL on 0x7E0, FBL -> requester on 0x7E8. */
@@ -105,30 +107,31 @@ static uint8_t     g_link_rx[BL_UDS_LINK_BUF];
 #define BL_UDS_SEC_LEVEL   0x01U
 
 static uint8_t g_seed[4];   /* last seed handed out, awaiting its key */
+static uint8_t g_seed_valid;
+static bl_sec_t g_sec;      /* attempt counter and seed counter (the library applies the delays) */
 
-/* Build a non-zero 4-byte seed from the millisecond tick. */
-static void bl_uds_make_seed(uint8_t seed[4])
+/* The library waits this long after every wrong key; the policy stretches it once
+   BL_SEC_MAX_FAILS have piled up (local patch in iso14229.h). */
+uint32_t BL_UdsFailDelayMs(void)
 {
-    uint32_t s = (UDSMillis() * 2654435761U) ^ 0x9E3779B9U;
-
-    if (s == 0U) {
-        s = 0xA5A5A5A5U;   /* spec: never hand out an all-zero seed for a locked level */
-    }
-    seed[0] = (uint8_t)(s);
-    seed[1] = (uint8_t)(s >> 8);
-    seed[2] = (uint8_t)(s >> 16);
-    seed[3] = (uint8_t)(s >> 24);
+    return BL_SecFailDelayMs(&g_sec);
 }
 
-/* Derive the expected key from a seed (key[i] = seed[i] XOR shared secret[i]). */
+/* A fresh seed per request, derived under the SecurityAccess key so it cannot be
+   predicted without it. */
+static void bl_uds_make_seed(uint8_t seed[4])
+{
+    uint32_t cycles = 0U;
+#if defined(DWT_BASE)
+    cycles = DWT->CYCCNT;
+#endif
+    BL_Sec_MakeSeed(seed, BL_SecNextCounter(&g_sec), UDSMillis(), cycles);
+}
+
+/* What the client has to answer: first 4 bytes of AES-CMAC(K, seed). */
 static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
 {
-    static const uint8_t secret[4] = { 0x19U, 0x84U, 0xC0U, 0xDEU };
-    int i;
-
-    for (i = 0; i < 4; i++) {
-        key[i] = (uint8_t)(seed[i] ^ secret[i]);
-    }
+    BL_Sec_KeyForSeed(seed, key);
 }
 
 /* ==========================================================================
@@ -214,6 +217,7 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
             return UDS_NRC_SubFunctionNotSupported;
         }
         bl_uds_make_seed(g_seed);
+        g_seed_valid = 1U;
         (void)a->copySeed(srv, g_seed, sizeof(g_seed));   /* append seed to the reply */
         return UDS_PositiveResponse;
     }
@@ -224,13 +228,18 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         if (a->level != BL_UDS_SEC_LEVEL) {
             return UDS_NRC_SubFunctionNotSupported;
         }
-        if (a->len != sizeof(expect)) {
+        if (a->len != sizeof(expect) || !g_seed_valid) {
+            g_seed_valid = 0U;
+            BL_SecNoteFail(&g_sec, UDSMillis());
             return UDS_NRC_InvalidKey;
         }
+        g_seed_valid = 0U;                 /* one attempt per seed */
         bl_uds_key_from_seed(g_seed, expect);
-        if (memcmp(a->key, expect, sizeof(expect)) != 0) {
+        if (!BL_Sec_Equal(a->key, expect, sizeof(expect))) {
+            BL_SecNoteFail(&g_sec, UDSMillis());
             return UDS_NRC_InvalidKey;
         }
+        BL_SecNoteSuccess(&g_sec);
         return UDS_PositiveResponse;   /* library records the unlocked level */
     }
 
@@ -356,6 +365,8 @@ void BL_UDS_Init(void)
     g_tp.rx_id    = BL_UDS_ID_REQUEST;
 
     UDSServerInit(&g_srv);
+    BL_SecInit(&g_sec, UDSMillis());
+    g_seed_valid = 0U;
     g_srv.tp = &g_tp.hdl;
     g_srv.fn = bl_uds_fn;
 }
