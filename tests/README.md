@@ -91,6 +91,9 @@ not answer that handshake, so this path is parked until that firmware lands.
 - **Sessions** - default / programming / extended accepted; an unknown
   sub-function is refused with `subFunctionNotSupported (0x12)`.
 - **Unknown service** - refused with `serviceNotSupported (0x11)`.
+- **Sessions** - the four sessions, which changes are allowed, the lock on a session change, S3, and
+  functional addressing (`test_uds_sessions.py`); the C rules are compared with the model on every
+  combination in `test_udspolicy.py`.
 - **Security access** - the correct seed/key (first 4 bytes of AES-CMAC of the
   seed, see `host/seckey.py`) unlocks; a wrong key or a wrong-length key gives
   `invalidKey (0x35)`; repeated bad keys lock the level with

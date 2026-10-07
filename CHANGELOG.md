@@ -24,7 +24,24 @@ All notable changes to this project are recorded here. The format follows
   Host tools, the Python model, the CAPL tester and the bridge self-test follow. A build
   without `BL_SEC_KEY_HEADER` uses the public demo key. Closes #5.
 
+- UDS sessions follow a state machine: default, programming, extended and safety system;
+  programming and safety are only reached through extended and only leave to default (NRC
+  0x22 otherwise); a session change re-locks security and 5 s of silence (S3) returns to
+  default. **Programming now needs `10 03` first**, so `bl_host.py udsflash`, `uds_client.py`,
+  the CAPL tester and the bridge self-test enter extended first. Closes #4.
+- Every UDS service has a row (sessions it works in, security level, physical/functional
+  addressing) in `bl_udspolicy.c`, checked before the service runs, in both UDS servers.
+  SecurityAccess is no longer available in the default session. The iso14229 server also
+  accepts functional requests on 0x7DF. Closes #3.
+- The framed ERASE and WRITE commands only accept addresses inside Slot B (page-aligned
+  erases, even write addresses, and a write length that fits in the frame). They took any
+  address before, so any transport could overwrite the app or the bootloader without a
+  signature. Hosts only ever used Slot B, so `flash` and `updatefbl` are unaffected.
+
 ### Tests
+- The session rules and service table on the real firmware (`test_sessions.py`), on the
+  iso14229 server through its on-chip self-test run in the emulator, and in the Python model;
+  the C table and the model are compared on every combination.
 - AES-CMAC checked against the RFC 4493 and FIPS-197 vectors, and the C, Python and CAPL
   versions against each other on random inputs.
 - SecurityAccess on the real firmware in the emulator: boot delay, key, single-use seeds,

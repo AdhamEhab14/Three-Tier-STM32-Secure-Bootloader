@@ -27,13 +27,16 @@ on real hardware.
   and confirm itself, or after a few failed boots the bootloader stops relaunching it and
   drops into recovery instead of boot-looping forever.
 - **Power-on self-test (BIST).** A RAM march test, a CRC-engine check, and a supply-voltage
-  reading run at every boot; a critical failure halts rather than boot something untrusted.
+  reading run at every boot; a broken RAM or CRC engine halts rather than boot something
+  untrusted. A damaged app does not: the bootloader stays up so it can be replaced.
 - **Self-update.** The bootloader can reprogram itself over any transport, staged and
   verified, then written by a small routine that runs from RAM.
 - **Six transports, one protocol.** The same framed command protocol runs over UART, CAN
   (ISO-TP), SPI, I2C, Wi-Fi, and BLE.
-- **UDS reprogramming.** A working ISO 14229 sequence — session control, seed/key security
-  access, RequestDownload / TransferData / RoutineControl — layered over the same protocol.
+- **UDS reprogramming.** A working ISO 14229 sequence — session control (default, programming,
+  extended, safety; programming only through extended), seed/key security access,
+  RequestDownload / TransferData / RoutineControl — layered over the same protocol, with a
+  per-service table of allowed sessions, security level and addressing.
   There's also a separate **standards-library port** (isotp-c for ISO 15765-2 + iso14229 for
   ISO 14229-1), tested on host, on-chip, and node-to-node over real CAN. It's a self-contained
   optional module that's deliberately kept out of the shipping bootloader to keep the FBL lean.
