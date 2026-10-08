@@ -28,3 +28,4 @@ build-test/
 tests/renode/_work/
 build-udsself/
 build-strict/
+build-debug/

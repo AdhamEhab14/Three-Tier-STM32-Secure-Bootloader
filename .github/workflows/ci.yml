@@ -28,10 +28,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_ALLOW_DEMO_KEY=ON
 
       - name: Build
         run: cmake --build build
+
+      - name: Flash headroom (release builds)
+        run: |
+          bash scripts/size_check.sh build/boot_manager.elf 16384
+          bash scripts/size_check.sh build/fbl.elf 40960
+          bash scripts/size_check.sh build/application.elf 28672
+
+      - name: Flash headroom (Debug FBL, the tightest case)
+        run: |
+          cmake -S . -B build-debug -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug -DBL_ALLOW_DEMO_KEY=ON
+          cmake --build build-debug --target fbl.elf
+          bash scripts/size_check.sh build-debug/fbl.elf 40960
 
       - name: Upload firmware binaries
         uses: actions/upload-artifact@v4
@@ -53,7 +65,7 @@ jobs:
           cmake --build build-strict
 
       - name: clang-tidy and cppcheck
-        run: scripts/lint.sh
+        run: bash scripts/lint.sh
 
   emulator:
     runs-on: ubuntu-latest
