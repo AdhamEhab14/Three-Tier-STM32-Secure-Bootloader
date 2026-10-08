@@ -149,21 +149,45 @@ static void ChaCha20_Block(const uint8_t key[32], uint32_t counter,
     }
 }
 
+/* One 64-byte block of the plaintext, decrypted from the ciphertext staged in Slot B.
+   Returns how many bytes of it belong to the image (the last block is shorter). */
+static uint32_t BL_DecryptBlock(const img_header_t *hdr, uint32_t off, uint8_t pt[64])
+{
+    const uint8_t *ct = (const uint8_t *)SLOT_B_BASE;
+    uint8_t ks[64];
+    uint32_t n = hdr->payload_size - off;
+    if (n > 64U) n = 64U;
+    ChaCha20_Block(BL_ENC_KEY, off / 64U, hdr->nonce, ks);
+    for (uint32_t i = 0U; i < n; i++) pt[i] = ct[off + i] ^ ks[i];
+    return n;
+}
+
+/* CRC of the image as it will be once decrypted, computed without writing anything.
+   The signature only covers the ciphertext, so this is what tells a right key from a
+   wrong one before Slot A is touched. Same CRC as BL_CRC_Bytes, just fed in blocks. */
+static uint32_t BL_DecryptedCrc(const img_header_t *hdr)
+{
+    uint8_t pt[64];
+    uint32_t word, crc = 0U;
+    __HAL_CRC_DR_RESET(&hcrc);
+    for (uint32_t off = 0U; off < hdr->payload_size; off += 64U) {
+        uint32_t n = BL_DecryptBlock(hdr, off, pt);
+        for (uint32_t i = 0U; i < n; i++) {
+            word = (uint32_t)pt[i];
+            crc  = HAL_CRC_Accumulate(&hcrc, &word, 1U);
+        }
+    }
+    return crc;
+}
+
 /* Decrypt the ChaCha20 ciphertext staged in Slot B into Slot A (already erased),
    64 bytes per keystream block, so nothing large is held in RAM. Authenticity was
    already established by verifying the signature over the ciphertext's hash. */
 static int BL_DecryptSlotBtoA(const img_header_t *hdr)
 {
-    const uint8_t *ct = (const uint8_t *)SLOT_B_BASE;
-    uint8_t ks[64], pt[64];
-    uint32_t off;
-
-    for (off = 0U; off < hdr->payload_size; off += 64U) {
-        uint32_t n = hdr->payload_size - off;
-        uint32_t i;
-        if (n > 64U) n = 64U;
-        ChaCha20_Block(BL_ENC_KEY, off / 64U, hdr->nonce, ks);
-        for (i = 0U; i < n; i++) pt[i] = ct[off + i] ^ ks[i];
+    uint8_t pt[64];
+    for (uint32_t off = 0U; off < hdr->payload_size; off += 64U) {
+        uint32_t n = BL_DecryptBlock(hdr, off, pt);
         if (!FlashIf_Write(APP_BASE + off, pt, n)) return 0;
     }
     return 1;
@@ -481,6 +505,14 @@ static int BL_InstallApp(const uint8_t *hdr_and_sig)
     app_meta_t meta;
 
     if (!BL_CheckImage(hdr_and_sig, &hdr, IMG_TYPE_APP, floor)) return 0;
+
+    /* An encrypted image carries the CRC of its plaintext (header v2). Decrypted with the
+       wrong key it would turn into garbage that still passes the signature check, so the
+       CRC is checked before the working app in Slot A is erased. */
+    if ((hdr.flags & IMG_FLAG_ENCRYPTED) &&
+        (hdr.hdr_version < IMG_HDR_V_PLAIN_CRC || BL_DecryptedCrc(&hdr) != hdr.plain_crc)) {
+        return 0;
+    }
 
     npages = (hdr.payload_size + 1023U) / 1024U;
     /* Promote Slot B -> Slot A: decrypt if encrypted, else copy. Either way Slot A

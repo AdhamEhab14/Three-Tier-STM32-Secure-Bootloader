@@ -24,6 +24,11 @@ All notable changes to this project are recorded here. The format follows
   run `genenckey`, rebuild, and re-sign any encrypted image. Signatures were never affected; the
   Ed25519 private key was never committed.
 - The ESP32 gateway's Wi-Fi password can come from a git-ignored `gateway_secrets.h`.
+- An encrypted image decrypted with the wrong key used to install as garbage over the working
+  app, since the signature only covers the ciphertext. The image header (format 2) now carries
+  the CRC of the plaintext in the field that was `reserved`, and the board checks it before
+  erasing Slot A. **Encrypted images must be re-signed** with this `sign_tool.py`; plaintext
+  images signed in format 1 still install.
 
 ### Changed
 - SecurityAccess (UDS 0x27) answers a seed with the first 4 bytes of AES-CMAC (RFC 4493)

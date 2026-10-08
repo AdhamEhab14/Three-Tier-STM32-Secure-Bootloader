@@ -75,18 +75,20 @@ uint32_t Meta_Floor(void);          /* version of the current record, 0 if none 
 #define IMG_TYPE_FBL  2U
 #define IMG_HDR_SIZE  100U          /* bytes of img_header_t (before the 64-byte signature) */
 
+#define IMG_HDR_V_PLAIN_CRC 2U      /* first header format with plain_crc; encrypted images need it */
+
 #define IMG_FLAG_ENCRYPTED  0x0001U /* payload in Slot B is ChaCha20 ciphertext */
 #define IMG_FLAG_COMPRESSED 0x0002U /* reserved for later (decompression)       */
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;         /* IMG_MAGIC                                       */
     uint8_t  img_type;      /* IMG_TYPE_APP / IMG_TYPE_FBL                     */
-    uint8_t  hdr_version;   /* header format = 1                              */
+    uint8_t  hdr_version;   /* header format: 1, or 2 when plain_crc is filled */
     uint16_t flags;         /* IMG_FLAG_* bitmask                             */
     uint32_t fw_version;    /* (major<<16)|(minor<<8)|patch — anti-rollback    */
     uint32_t build_time;    /* unix epoch, informational                      */
     uint32_t payload_size;  /* bytes staged in Slot B (ciphertext == plaintext length) */
-    uint32_t reserved;      /* padding / future                              */
+    uint32_t plain_crc;     /* v2: CRC (BL_CRC_Bytes) of the plaintext; 0 in v1 */
     uint8_t  nonce[12];     /* ChaCha20 nonce (RFC 8439), used when encrypted  */
     uint8_t  digest[64];    /* SHA-512 of the payload exactly as staged in Slot B */
 } img_header_t;

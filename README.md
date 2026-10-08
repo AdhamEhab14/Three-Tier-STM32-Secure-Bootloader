@@ -116,7 +116,9 @@ What it does *not* fully cover on this particular MCU:
 - **Confidentiality.** The ChaCha20 key is symmetric and baked into the FBL, so anyone who
   can read the flash out can decrypt firmware images. The encryption protects firmware in
   transit and against a remote attacker, not against someone holding this chip. It has to be
-  your own key (`genenckey`): the demo key in this repository protects nothing.
+  your own key (`genenckey`): the demo key in this repository protects nothing. The signed
+  header also carries the CRC of the plaintext, so an image encrypted under another key is
+  refused before the working app is erased, instead of installing as garbage.
 - **The SecurityAccess key.** UDS `0x27` answers a seed with the first 4 bytes of AES-CMAC
   under a 128-bit key built into the FBL, so someone who can read the flash out can open
   the diagnostic gate. What the scheme does stop is a bus-side attacker: the key cannot be
