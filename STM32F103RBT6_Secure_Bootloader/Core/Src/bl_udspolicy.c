@@ -20,7 +20,7 @@ static const bl_uds_service_t services[] = {
     { 0x22U, BL_SESS_ALL,      0U, BL_ADDR_BOTH     },   /* ReadDataByIdentifier */
     { 0x23U, PRG,              1U, BL_ADDR_PHYSICAL },   /* ReadMemoryByAddress (read-back) */
     { 0x27U, PRG | EXT | SAF,  0U, BL_ADDR_PHYSICAL },   /* SecurityAccess */
-    { 0x28U, EXT,              0U, BL_ADDR_BOTH     },   /* CommunicationControl */
+    { 0x28U, EXT | PRG,        0U, BL_ADDR_BOTH     },   /* CommunicationControl */
     { 0x31U, PRG | EXT,        0U, BL_ADDR_PHYSICAL },   /* RoutineControl (each routine adds its own checks) */
     { 0x34U, PRG,              1U, BL_ADDR_PHYSICAL },   /* RequestDownload */
     { 0x36U, PRG,              1U, BL_ADDR_PHYSICAL },   /* TransferData */

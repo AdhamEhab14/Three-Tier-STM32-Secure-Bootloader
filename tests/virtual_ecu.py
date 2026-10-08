@@ -58,7 +58,7 @@ SERVICES = {
     0x22: (ALL_SESSIONS, 0, BOTH),                                           # ReadDataByIdentifier
     0x23: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # ReadMemoryByAddress
     0x27: ({SESSION_PROGRAMMING, SESSION_EXTENDED, SESSION_SAFETY}, 0, {PHYSICAL}),   # SecurityAccess
-    0x28: ({SESSION_EXTENDED}, 0, BOTH),                                     # CommunicationControl
+    0x28: ({SESSION_EXTENDED, SESSION_PROGRAMMING}, 0, BOTH),                                     # CommunicationControl
     0x31: ({SESSION_PROGRAMMING, SESSION_EXTENDED}, 0, {PHYSICAL}),          # RoutineControl
     0x34: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # RequestDownload
     0x36: ({SESSION_PROGRAMMING}, 1, {PHYSICAL}),                            # TransferData

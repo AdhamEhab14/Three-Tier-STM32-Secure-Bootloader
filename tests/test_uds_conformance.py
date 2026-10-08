@@ -131,7 +131,7 @@ def test_check_memory_incorrect_length_rejected(uds):
 # ---- services accepted to keep the bus quiet during programming ------------
 
 def test_communication_control_accepted(uds):
-    uds.send([0x10, 0x03])                             # only offered in the extended session
+    uds.send([0x10, 0x03])                             # not offered in the default session
     assert_positive(uds.send([0x28, 0x03, 0x01]), 0x28)
 
 

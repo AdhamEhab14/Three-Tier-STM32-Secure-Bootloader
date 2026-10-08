@@ -296,15 +296,15 @@ def udsflash(ser, path):
     tag = "encrypted " if encrypted else ""
 
     if uds_req(ser, [0x10, 0x03], "extended session") is None: return   # programming is only reachable from extended
+    # the usual flash sequence quiets the ECU while still in extended; the bootloader has
+    # nothing to silence but accepts both
+    if uds_req(ser, [0x85, 0x02], "DTC recording off") is None: return
+    if uds_req(ser, [0x28, 0x03, 0x01], "communication off") is None: return
     if uds_req(ser, [0x10, 0x02], "session") is None: return          # programming session
     print("Programming session.")
 
     if not uds_unlock(ser): return                                    # security access
     print("Unlocked.")
-
-    # the usual flash sequence quiets the ECU first; the bootloader has nothing to silence but accepts both
-    if uds_req(ser, [0x85, 0x02], "DTC recording off") is None: return
-    if uds_req(ser, [0x28, 0x03, 0x01], "communication off") is None: return
 
     size = len(img)
     dl = [0x34, 0x00, 0x44] + list(struct.pack(">I", SLOT_B)) + list(struct.pack(">I", size))

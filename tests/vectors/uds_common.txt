@@ -50,6 +50,7 @@
 34 00 44 08 01 50 00 00 00 00 10 | 7F 34 7F | download needs programming, extended is not enough
 27 01          | 67 01    | a seed is offered in extended
 10 02          | 50 02    | programming
+28 03 01       | 68 03    | CommunicationControl also in programming (the flow in issue #2)
 34 00 44 08 01 50 00 00 00 00 10 | 7F 34 33 | right session, still locked
 10 01          | 50 01    | back to default
 
