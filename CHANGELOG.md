@@ -6,6 +6,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (found by the power-cut tests)
+- A power cut during the FBL self-update left the Boot Manager blinking forever; it now
+  redoes the copy from Slot B.
+- A damaged application image (for example after an interrupted install) halted the
+  bootloader in the self-test; only a broken RAM or CRC engine does that now.
+- A power cut while rewriting the app metadata reset the anti-rollback floor to zero, so
+  an older image could be installed. The metadata is now kept in two pages and only the
+  non-current one is rewritten. The record format changed (two new fields), so the
+  first install after upgrading re-seeds the floor.
+
+### Tests
+- Emulator tests that cut power at every kind of flash operation during an FBL
+  self-update and an app install (`tests/renode`, marker `powercut`).
+
 ### Build
 - CMake build for all four firmware projects with plain `arm-none-eabi-gcc`
   (no CubeIDE needed), and a CI job that compiles them and keeps the `.bin` files.

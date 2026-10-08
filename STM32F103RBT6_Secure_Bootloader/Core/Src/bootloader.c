@@ -169,11 +169,53 @@ static int BL_DecryptSlotBtoA(const img_header_t *hdr)
     return 1;
 }
 
+/* ---- application metadata: two pages, newest valid record wins ---------------- */
+#define META_CHECK_SALT 0xA5C35A3CU
+
+static uint32_t Meta_CheckWord(const app_meta_t *m)
+{
+    return m->magic ^ m->size ^ m->crc ^ m->version ^ m->seq ^ META_CHECK_SALT;
+}
+
+static int Meta_IsValid(const app_meta_t *m)
+{
+    if (m->magic != APP_META_MAGIC)         return 0;
+    if (m->version == 0xFFFFFFFFU)          return 0;
+    if (m->seq == 0xFFFFFFFFU)              return 0;
+    return (m->check == Meta_CheckWord(m)) ? 1 : 0;
+}
+
+const app_meta_t *Meta_Current(void)
+{
+    const app_meta_t *a = (const app_meta_t *)CONFIG_ADDR;
+    const app_meta_t *b = (const app_meta_t *)CONFIG_ALT_ADDR;
+    int va = Meta_IsValid(a);
+    int vb = Meta_IsValid(b);
+
+    if (va && vb) return (b->seq > a->seq) ? b : a;
+    if (va)       return a;
+    if (vb)       return b;
+    return (const app_meta_t *)0;
+}
+
+uint32_t Meta_Floor(void)
+{
+    const app_meta_t *m = Meta_Current();
+    return m ? m->version : 0U;
+}
+
+/* The page to rewrite next: whichever one is not the current record. */
+static uint32_t Meta_TargetAddr(void)
+{
+    const app_meta_t *m = Meta_Current();
+    return (m == (const app_meta_t *)CONFIG_ADDR) ? CONFIG_ALT_ADDR : CONFIG_ADDR;
+}
+
 int BootMgr_AppValid(void)
 {
-    const app_meta_t *meta = (const app_meta_t *)CONFIG_ADDR;
+    const app_meta_t *meta = Meta_Current();
 
-    if (meta->magic != APP_META_MAGIC)                 return 0;
+    if (meta == (const app_meta_t *)0)                 return 0;
     if (meta->size == 0U || meta->size > APP_MAX_SIZE) return 0;
     return (BL_CRC_Region(APP_BASE, meta->size) == meta->crc) ? 1 : 0;
 }
@@ -312,17 +354,23 @@ static uint16_t BIST_ReadVdd_mv(int *ok)
 
 int BIST_Run(bist_result_t *out)
 {
-    const app_meta_t *meta = (const app_meta_t *)CONFIG_ADDR;
     int vok = 0;
 
+    int crc_ok = BIST_CrcEngine();
+
     g_bist.ram_ok   = (uint8_t)BIST_RamMarch();
-    g_bist.flash_ok = (uint8_t)(BIST_CrcEngine() &&
-                                (meta->magic != APP_META_MAGIC || BootMgr_AppValid()));
+    /* flash_ok is what the BIST command reports: the CRC engine works AND the
+       installed app, if there is one, still matches its recorded CRC. */
+    g_bist.flash_ok = (uint8_t)(crc_ok &&
+                                (Meta_Current() == (const app_meta_t *)0 || BootMgr_AppValid()));
     g_bist.vdd_mv   = BIST_ReadVdd_mv(&vok);
     g_bist.vdd_ok   = (uint8_t)(vok && g_bist.vdd_mv >= 2700U && g_bist.vdd_mv <= 3600U);
 
     if (out) *out = g_bist;
-    return (g_bist.ram_ok && g_bist.flash_ok) ? 1 : 0;   /* VDD is advisory */
+    /* Only a broken RAM or CRC engine is fatal. A damaged application image is not:
+       recovering from that (an interrupted install, say) is the bootloader's job, and
+       BootMgr_JumpToApp already refuses to launch it. VDD is advisory. */
+    return (g_bist.ram_ok && crc_ok) ? 1 : 0;
 }
 
 /* ---- reply builders (fill bl_reply instead of transmitting) ---- */
@@ -403,9 +451,9 @@ static int BL_CheckImage(const uint8_t *buf, img_header_t *out, uint8_t expected
    Returns 1 on success. */
 static int BL_InstallApp(const uint8_t *hdr_and_sig)
 {
-    const app_meta_t *cur = (const app_meta_t *)CONFIG_ADDR;
-    uint32_t floor = (cur->magic == APP_META_MAGIC && cur->version != 0xFFFFFFFFU)
-                     ? cur->version : 0U;   /* installed version is the rollback floor */
+    const app_meta_t *cur = Meta_Current();
+    uint32_t floor = Meta_Floor();          /* installed version is the rollback floor */
+    uint32_t target = Meta_TargetAddr();    /* the page that is NOT the current record */
     img_header_t hdr;
     uint32_t npages;
     int promoted;
@@ -426,8 +474,12 @@ static int BL_InstallApp(const uint8_t *hdr_and_sig)
     meta.size    = hdr.payload_size;
     meta.crc     = BL_CRC_Region(APP_BASE, hdr.payload_size);
     meta.version = hdr.fw_version;
-    if (FlashIf_ErasePages(CONFIG_ADDR, 1U) &&
-        FlashIf_Write(CONFIG_ADDR, (const unsigned char *)&meta, sizeof(meta))) {
+    meta.seq     = cur ? (cur->seq + 1U) : 1U;
+    meta.check   = Meta_CheckWord(&meta);
+    /* Rewrite only the non-current page: until the last word below is programmed the
+       previous record (and with it the rollback floor) is still the one in force. */
+    if (FlashIf_ErasePages(target, 1U) &&
+        FlashIf_Write(target, (const unsigned char *)&meta, sizeof(meta))) {
         BootTrial_Begin();   /* new app is on trial until it confirms itself */
         return 1;
     }
@@ -636,8 +688,7 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
         case 0xF186U:   /* active diagnostic session */
             resp[3] = uds_session; return 4U;
         case 0xF190U: { /* installed app version */
-            const app_meta_t *m = (const app_meta_t *)CONFIG_ADDR;
-            uint32_t v = (m->magic == APP_META_MAGIC) ? m->version : 0U;
+            uint32_t v = Meta_Floor();
             resp[3] = (uint8_t)(v >> 16); resp[4] = (uint8_t)(v >> 8); resp[5] = (uint8_t)v;
             return 6U;
         }

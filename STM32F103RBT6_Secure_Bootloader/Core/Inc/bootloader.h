@@ -16,7 +16,8 @@
 #define APP_BASE        0x0800E000U   /* application (Slot A) base            */
 #define APP_MAX_SIZE    (28U * 1024U) /* size reserved for the application    */
 #define SLOT_B_BASE     0x08015000U   /* staging slot: new image lands here first */
-#define CONFIG_ADDR     0x0801FC00U   /* last 1 KB page: application metadata  */
+#define CONFIG_ADDR     0x0801FC00U   /* last 1 KB page: application metadata, slot 0 */
+#define CONFIG_ALT_ADDR 0x0801F800U   /* application metadata, slot 1 (never both rewritten at once) */
 #define APP_META_MAGIC  0x600DF00DU   /* "a valid app is present" marker       */
 #define BL_SIG_LEN      64U           /* Ed25519 signature length              */
 
@@ -39,7 +40,18 @@ typedef struct {
     uint32_t size;    /* application image size in bytes            */
     uint32_t crc;     /* STM32 CRC over the application image        */
     uint32_t version; /* installed app version (anti-rollback floor) */
+    uint32_t seq;     /* install counter: the highest valid seq is the current record */
+    uint32_t check;   /* programmed last; a half-written record never matches */
 } app_meta_t;
+
+/*
+ * The record lives in two flash pages (CONFIG_ADDR and CONFIG_ALT_ADDR). An install
+ * only ever erases and rewrites the page that is NOT the current record, so a power
+ * cut at any point leaves the previous record intact and the rollback floor cannot
+ * be lost. Meta_Current() returns the valid record with the highest seq, or NULL.
+ */
+const app_meta_t *Meta_Current(void);
+uint32_t Meta_Floor(void);          /* version of the current record, 0 if none */
 
 /*
  * Signed image header. The host builds one of these for every image (app or FBL)

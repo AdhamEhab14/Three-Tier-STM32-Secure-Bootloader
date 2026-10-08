@@ -173,6 +173,53 @@ class RenodeSession:
         self.rx.clear()
         self.run_for(settle)
 
+    FLASH_CTL = 0x40022000
+
+    def flash_ops(self):
+        """Number of flash operations the model has seen since reset of the counter."""
+        return self.read_word(self.FLASH_CTL + 0x100)
+
+    def set_cut(self, opcount):
+        """Pause the machine when the flash model is about to start operation number `opcount`."""
+        self.cmd("sysbus WriteDoubleWord 0x%X 0x%X" % (self.FLASH_CTL + 0x104, opcount))
+
+    def set_cut_on_erase(self, page_addr):
+        """Pause when the firmware is about to erase the flash page at page_addr."""
+        self.cmd("sysbus WriteDoubleWord 0x%X 0x%X" % (self.FLASH_CTL + 0x114, page_addr))
+
+    def cut_fired(self):
+        return self.read_word(self.FLASH_CTL + 0x108) == 1
+
+    def cut_info(self):
+        """(kind, page address): kind 1 = erase cut before it ran, 2 = program cut, 0 = none."""
+        return self.read_word(self.FLASH_CTL + 0x10C), self.read_word(self.FLASH_CTL + 0x110)
+
+    FLASH_BASE = 0x08000000
+    FLASH_SIZE = 0x20000
+
+    def dump_flash(self):
+        """The whole 128 KB flash as bytes (slow: about 10 s)."""
+        out = self.cmd("sysbus ReadBytes 0x%X 0x%X" % (self.FLASH_BASE, self.FLASH_SIZE), timeout=600)
+        out = out[out.find("["):]
+        data = bytes(int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", out))
+        if len(data) != self.FLASH_SIZE:
+            raise RuntimeError("flash dump returned %d bytes" % len(data))
+        return data
+
+    def restore_flash(self, data, scratch_rel):
+        """Replace the whole flash with `data` (scratch_rel: a repo-relative temp file path)."""
+        open(os.path.join(ROOT, scratch_rel), "wb").write(data)
+        self.load_binary(scratch_rel, self.FLASH_BASE)
+
+    def power_cycle(self, hold_b1=True, settle=1.5):
+        """A real power loss: RAM is lost, flash is kept, everything restarts."""
+        self.cmd("sram FillWithConstantByte 0")
+        self.cmd("cpu IsHalted false")
+        self.cmd("sysbus WriteDoubleWord 0x%X 0xFFFFFFFF" % (self.FLASH_CTL + 0x104))
+        self.cmd("sysbus WriteDoubleWord 0x%X 0xFFFFFFFF" % (self.FLASH_CTL + 0x114))
+        self.cmd("sysbus WriteDoubleWord 0x%X 0" % (self.FLASH_CTL + 0x100))
+        self.reboot(hold_b1=hold_b1, settle=settle)
+
     def pc(self):
         for tok in self.cmd("cpu PC").split():
             if tok.startswith("0x"):
