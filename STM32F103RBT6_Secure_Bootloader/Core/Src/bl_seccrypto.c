@@ -13,7 +13,7 @@
 #elif defined(BL_SEC_KEY_HEADER)
 #include BL_SEC_KEY_HEADER           /* the product's own key, given on the build line */
 #else
-#warning "Building with the PUBLIC demo SecurityAccess key: define BL_SEC_KEY_HEADER for anything that is not a demo"
+#warning "PUBLIC demo SecurityAccess key: set BL_SEC_KEY_HEADER for a real build"
 #include "bl_seckey_demo.h"          /* public demo key, fine for a demo and nothing else */
 #endif
 

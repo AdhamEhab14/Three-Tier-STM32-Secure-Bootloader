@@ -58,7 +58,7 @@ static const uint8_t BL_PUBLIC_KEY[32] = {
 #if defined(BL_ENC_KEY_HEADER)
 #include BL_ENC_KEY_HEADER
 #else
-#warning "Building with the PUBLIC demo image-encryption key: define BL_ENC_KEY_HEADER for anything that is not a demo"
+#warning "PUBLIC demo image-encryption key: set BL_ENC_KEY_HEADER for a real build"
 #include "bl_enckey_demo.h"
 #endif
 static const uint8_t BL_ENC_KEY[32] = BL_ENC_KEY_BYTES;
