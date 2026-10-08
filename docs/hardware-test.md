@@ -51,6 +51,8 @@ an older bootloader needs it installed once more (step 2 below) before the app b
 2. Same with version `0.9.0`. Expect: rejected as a rollback.
 3. Flip one byte in the signed file and flash it. Expect: rejected, the old app still boots.
 4. Sign with `enc` and flash. Expect: installs and runs.
+5. Sign with `enc` using a different key (point `BL_KEYS_DIR` at a folder holding another
+   `bl_enckey.bin` and the same `bl_private.bin`) and flash. Expect: refused, the old app still boots.
 
 ## 3. Raw commands are fenced
 

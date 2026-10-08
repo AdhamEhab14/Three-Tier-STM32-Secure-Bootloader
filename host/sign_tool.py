@@ -27,6 +27,7 @@ import nacl.signing
 
 IMG_MAGIC = 0x21474D49   # "IMG!" - must match IMG_MAGIC in bootloader.h
 IMG_FLAG_ENCRYPTED = 0x0001
+HDR_VERSION = 2          # img_header_t format; 2 = carries plain_crc
 
 KEYS = os.environ.get("BL_KEYS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "keys")
 PRIV = os.path.join(KEYS, "bl_private.bin")
@@ -35,6 +36,16 @@ ENCK = os.path.join(KEYS, "bl_enckey.bin")   # pre-shared ChaCha20 key (git-igno
 ENCH = os.path.join(KEYS, "bl_enckey.h")     # the same key as a header for the firmware build
 SECK = os.path.join(KEYS, "bl_seckey.bin")   # SecurityAccess AES-CMAC key (git-ignored)
 SECH = os.path.join(KEYS, "bl_seckey.h")     # the same key as a header for the firmware build
+
+
+def plain_crc(data):
+    """The firmware's BL_CRC_Bytes: the STM32 CRC unit (CRC-32/MPEG-2), fed one byte per word."""
+    crc = 0xFFFFFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(32):
+            crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if crc & 0x80000000 else (crc << 1) & 0xFFFFFFFF
+    return crc
 
 
 # ---- ChaCha20 (RFC 8439), matches ChaCha20_Block in the firmware ----
@@ -138,10 +149,12 @@ def sign(path, version, img_type, encrypt):
     type_code  = 1 if img_type == "app" else 2
 
     # 100-byte header (must match img_header_t): magic, type, hdr_ver, flags,
-    # fw_version, build_time, payload_size, reserved, 12-byte nonce, 64-byte digest.
+    # fw_version, build_time, payload_size, plain_crc, 12-byte nonce, 64-byte digest.
+    # Format 2 adds plain_crc, the CRC of the plaintext: the signature covers the staged
+    # (maybe encrypted) bytes, and this is how the board notices a wrong decryption key.
     header = struct.pack("<IBBHIIII",
-                         IMG_MAGIC, type_code, 1, flags,
-                         fw_version, int(time.time()), len(payload), 0) + nonce + digest
+                         IMG_MAGIC, type_code, HDR_VERSION, flags,
+                         fw_version, int(time.time()), len(payload), plain_crc(payload)) + nonce + digest
     sig = sk.sign(hashlib.sha512(header).digest()).signature   # sign the header itself
     open(path + ".hdr", "wb").write(header + sig)              # 100 + 64 = 164 bytes
     tag = "encrypted " if encrypt else ""
