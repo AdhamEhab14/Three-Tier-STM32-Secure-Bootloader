@@ -18,6 +18,11 @@
 /* Bring up CAN1 (loopback mode for now), accept-all filter, and start it. */
 void CAN_BL_Init(void);
 
+/* Next received frame from the RX interrupt's ring. 1 = got one, 0 = none waiting. */
+int      CAN_BL_Read(uint32_t *id, uint8_t *ext, uint8_t data[8], uint8_t *dlc);
+uint32_t CAN_BL_RxPending(void);   /* frames waiting in the ring */
+uint32_t CAN_BL_RxDropped(void);   /* frames lost because the ring was full */
+
 /* Send one raw frame to ourselves and read it back. 1 = pass, 0 = fail. */
 int  CAN_BL_SelfTest(void);
 

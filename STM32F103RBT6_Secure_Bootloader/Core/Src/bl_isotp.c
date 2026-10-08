@@ -8,6 +8,7 @@
  */
 #include "bl_isotp.h"
 #include "can.h"    /* hcan, configured by CubeMX */
+#include "can_bl.h" /* CAN_BL_Read: frames arrive through the RX interrupt ring */
 #include <string.h>
 
 /* ==========================================================================
@@ -118,21 +119,19 @@ void BL_ISOTP_InitLink(IsoTpLink *link, uint32_t tx_id, uint32_t rx_id,
 
 void BL_ISOTP_Pump(IsoTpLink **links, const uint32_t *rx_ids, int n)
 {
-    CAN_RxHeaderTypeDef header;
-    uint8_t frame[8];
+    uint32_t id;
+    uint8_t  ext, dlc;
+    uint8_t  frame[8];
     int i;
 
-    /* Drain everything currently in the FIFO and route by CAN ID. */
-    while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) > 0U) {
-        if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, frame) != HAL_OK) {
-            break;
-        }
-        if (header.IDE != CAN_ID_STD) {
+    /* Drain everything the RX interrupt has queued and route by CAN ID. */
+    while (CAN_BL_Read(&id, &ext, frame, &dlc)) {
+        if (ext != 0U) {
             continue;   /* this protocol only uses 11-bit IDs */
         }
         for (i = 0; i < n; i++) {
-            if (header.StdId == rx_ids[i]) {
-                isotp_on_can_message(links[i], frame, (uint8_t)header.DLC);
+            if (id == rx_ids[i]) {
+                isotp_on_can_message(links[i], frame, dlc);
                 break;
             }
         }
