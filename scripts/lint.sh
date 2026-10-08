@@ -44,8 +44,10 @@ run_clang_tidy() {
 
 run_cppcheck() {
   echo "== cppcheck"
+  # once -D is given cppcheck only knows the macros it is told about, and CMSIS wants to see GCC
   cppcheck --enable=warning,performance,portability --inconclusive --std=c11 --platform=unix32 \
     --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem --quiet \
+    -D__GNUC__=14 -D__arm__ \
     "${DEFS[@]}" "${INCS[@]}" "${FILES[@]}"
 }
 
