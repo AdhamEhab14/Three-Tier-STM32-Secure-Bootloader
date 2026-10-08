@@ -35,6 +35,7 @@
 #define CBL_UPDATE_FBL       0x1BU   /* reprogram the bootloader itself   */
 #define CBL_LOCK_BM          0x1CU   /* write-protect the Boot Manager    */
 #define CBL_BIST             0x1DU   /* read the power-on self-test result */
+#define CBL_LOCK_RDP         0x1EU   /* read-protect the chip (RDP level 1) */
 #define CBL_UDS              0x20U   /* wraps a UDS (ISO 14229) request as its payload */
 
 /* This FBL's own version, packed the same way as an image header's fw_version.
@@ -597,10 +598,18 @@ static void BL_Handle_UpdateFbl(void)
    preserves the current RDP level, so this does NOT read-lock the chip. After
    this, the BM cannot be erased or reprogrammed until WRP is removed with
    STM32CubeProgrammer. The reload/reset is deferred to BL_Run so the host still
-   gets this ACK. */
+   gets this ACK. Like LOCK_RDP below it changes the chip for good, so both need
+   the same unlock as a download (BL_LockAllowed). */
+static int BL_LockAllowed(void);   /* below, next to the UDS session state */
+
 static void BL_Handle_LockBm(void)
 {
     FLASH_OBProgramInitTypeDef ob = {0};
+
+    if (!BL_LockAllowed()) {
+        BL_ReplyByte(0U);
+        return;
+    }
     ob.OptionType = OPTIONBYTE_WRP;
     ob.WRPState   = OB_WRPSTATE_ENABLE;
     ob.WRPPage    = OB_WRP_PAGES0TO3 | OB_WRP_PAGES4TO7 |
@@ -616,6 +625,71 @@ static void BL_Handle_LockBm(void)
     }
     else
     {
+        HAL_FLASH_OB_Lock();
+        HAL_FLASH_Lock();
+        BL_ReplyByte(0U);
+    }
+}
+
+/* ---- option-byte helpers for the read-protection lock ---- */
+static int ob_wait(void)
+{
+    while ((FLASH->SR & FLASH_SR_BSY) != 0U) { }
+    if ((FLASH->SR & (FLASH_SR_PGERR | FLASH_SR_WRPRTERR)) != 0U) {
+        FLASH->SR = FLASH_SR_PGERR | FLASH_SR_WRPRTERR;   /* write 1 to clear */
+        return 0;
+    }
+    return 1;
+}
+
+static int ob_write(volatile uint16_t *where, uint8_t value)
+{
+    int ok;
+    FLASH->CR |= FLASH_CR_OPTPG;
+    *where = value;                      /* the complement byte is filled in by the hardware */
+    ok = ob_wait();
+    FLASH->CR &= ~FLASH_CR_OPTPG;
+    return ok;
+}
+
+/* Turn on read protection level 1: no flash read-out through SWD/JTAG or the system
+   bootloader, and going back to level 0 mass-erases the chip. On the F103 that is not
+   proof against a lab attacker (see the README), but it stops a debugger dump.
+   The HAL's own RDP change erases the whole option-byte block and writes back only the
+   RDP byte, which would quietly drop the Boot Manager's write protection. So the block
+   is erased once here and RDP, the user byte and all four WRP bytes are written back,
+   the last two exactly as the chip has them loaded now. */
+static void BL_Handle_LockRdp(void)
+{
+    uint32_t wrpr = FLASH->WRPR;                                   /* 0 bit = protected */
+    uint8_t  user = (uint8_t)(((FLASH->OBR & FLASH_OBR_USER) >> FLASH_OBR_USER_Pos) | 0xF8U);
+    volatile uint16_t *wrp[4] = { &OB->WRP0, &OB->WRP1, &OB->WRP2, &OB->WRP3 };
+    int ok;
+
+    if (!BL_LockAllowed()) {
+        BL_ReplyByte(0U);
+        return;
+    }
+    HAL_FLASH_Unlock();
+    HAL_FLASH_OB_Unlock();
+
+    ok = ob_wait();
+    if (ok) {                                                      /* erase the block */
+        FLASH->CR |= FLASH_CR_OPTER;
+        FLASH->CR |= FLASH_CR_STRT;
+        ok = ob_wait();
+        FLASH->CR &= ~FLASH_CR_OPTER;
+    }
+    ok = ok && ob_write(&OB->RDP, 0x00U);                          /* anything but 0xA5 = level 1 */
+    ok = ok && ob_write(&OB->USER, user);
+    for (uint32_t i = 0U; i < 4U; i++) {
+        ok = ok && ob_write(wrp[i], (uint8_t)(wrpr >> (8U * i)));
+    }
+
+    if (ok) {
+        BL_ReplyByte(1U);
+        bl_lock_bm_pending = 1U;   /* same deferred reload and reset as LOCK_BM */
+    } else {
         HAL_FLASH_OB_Lock();
         HAL_FLASH_Lock();
         BL_ReplyByte(0U);
@@ -673,6 +747,14 @@ static uint32_t uds_dl_addr;
 static uint32_t uds_dl_remaining;
 static uint8_t  uds_bsc;                 /* expected block sequence counter */
 static uint8_t  bl_uds_reset_pending;
+
+/* The lock commands need what a download needs: the programming session and a
+   SecurityAccess unlock, done through CMD_UDS beforehand. Without it anyone on any
+   transport could lock the chip. */
+static int BL_LockAllowed(void)
+{
+    return (uds_session == SESSION_PROGRAMMING && uds_unlocked) ? 1 : 0;
+}
 
 /* Finer than the ms tick; only used to make seeds differ between power-ups. */
 static uint32_t uds_cycles(void)
@@ -953,6 +1035,7 @@ static void BL_ProcessFrame(uint32_t total)
         case CBL_VERIFY_CMD:      BL_Handle_Verify();     break;
         case CBL_UPDATE_FBL:      BL_Handle_UpdateFbl();  break;
         case CBL_LOCK_BM:         BL_Handle_LockBm();     break;
+        case CBL_LOCK_RDP:        BL_Handle_LockRdp();    break;
         case CBL_BIST:            BL_Handle_Bist();       break;
         case CBL_UDS:             BL_Handle_Uds();        break;
         case CBL_GO_TO_ADDR_CMD:  BL_Handle_Go();         break;
@@ -1165,9 +1248,10 @@ void BL_Run(void)
         uint32_t total = 0U;
 
         /* If a prior app started the IWDG, it survives the watchdog reset and
-           is still counting. Refresh it here so recovery mode (this loop can
-           wait indefinitely for a new upload) doesn't reset every ~2 s. Writing
-           the refresh key is a no-op when the IWDG was never started. */
+           is still counting (the Boot Manager stretched it to ~26 s, so a
+           signature check fits). Refresh it here so recovery mode (this loop can
+           wait indefinitely for a new upload) doesn't reset. Writing the refresh
+           key is a no-op when the IWDG was never started. */
         IWDG->KR = 0xAAAAU;
         uds_s3_poll();
 
