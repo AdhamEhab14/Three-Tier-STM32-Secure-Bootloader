@@ -48,6 +48,24 @@ trace a bus monitor would have captured.
 python uds_bus_sim.py
 ```
 
+## Running the firmware in the emulator
+
+`renode/` boots the real Boot Manager and FBL in [Renode](https://renode.io) (1.17) and talks to
+them with the real host tool, no board needed. Build with the published test keys first:
+
+```
+cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+cmake --build build-test
+cmake -S . -B build-udsself -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+cmake --build build-udsself
+cd tests/renode
+python -m pytest -m "not powercut"     # install, security, sessions, raw commands, both UDS servers (about 20 min)
+python -m pytest -m powercut           # power cut at every kind of flash operation (about 30 min)
+```
+
+Set `RENODE_PATH` if `renode` is not on the PATH. Without Renode or the builds the tests skip.
+Needs `pyserial` and `pynacl`.
+
 ## Running against real hardware
 
 The firmware has two UDS servers, so there are two hardware paths.

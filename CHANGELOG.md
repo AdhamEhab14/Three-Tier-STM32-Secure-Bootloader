@@ -16,6 +16,15 @@ All notable changes to this project are recorded here. The format follows
   non-current one is rewritten. The record format changed (two new fields), so the
   first install after upgrading re-seeds the floor.
 
+### Security
+- **The image-encryption (ChaCha20) key was committed in `bootloader.c`**, so images encrypted
+  with it were readable by anyone with the repository. It now comes from a git-ignored header
+  (`sign_tool.py genenckey` writes `host/keys/bl_enckey.h`; CMake `-DBL_ENC_KEY_HEADER=...`).
+  The old key is kept only as the public demo key. **Rotate it**: delete `host/keys/bl_enckey.bin`,
+  run `genenckey`, rebuild, and re-sign any encrypted image. Signatures were never affected; the
+  Ed25519 private key was never committed.
+- The ESP32 gateway's Wi-Fi password can come from a git-ignored `gateway_secrets.h`.
+
 ### Changed
 - SecurityAccess (UDS 0x27) answers a seed with the first 4 bytes of AES-CMAC (RFC 4493)
   instead of an XOR with a constant. Seeds are derived under the same key (they were a
@@ -50,7 +59,8 @@ All notable changes to this project are recorded here. The format follows
   The production handler answers `10` without a sub-function with 0x13, as the standard asks,
   and gained `23` (read back the staging slot, 64 bytes at most), `28` and `85`, which the
   service table lists and the iso14229 server already had. `bl_host.py udsflash` now sends
-  `85 02` and `28 03 01` before the download, as the standard sequence does.
+  `85 02` and `28 03 01` in the extended session before entering programming, as the standard
+  sequence does.
   Found by replaying one shared request list against both servers (below).
 
 ### Tests

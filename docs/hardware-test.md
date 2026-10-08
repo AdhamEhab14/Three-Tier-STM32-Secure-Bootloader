@@ -12,16 +12,16 @@ two MCP2551 transceivers (or a second node), and the ESP32 gateway.
 ## 0. Build
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \n      -DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h -DBL_ENC_KEY_HEADER=host/keys/bl_enckey.h
 cmake --build build
 ```
 
 If you build in CubeIDE instead, refresh the projects first (new source files), and use the
 Debug configuration only for stepping through code: it is `-Og` now.
 
-Run `python host/sign_tool.py genkey`, `genenckey` and `genseckey` first, and paste the two
-public values into `bootloader.c` as the README says. CMake refuses to build the bootloader
-without `BL_SEC_KEY_HEADER`; `-DBL_ALLOW_DEMO_KEY=ON` gets the public demo key, which is fine for a
+Run `python host/sign_tool.py genkey`, `genenckey` and `genseckey` first, and paste the public
+key into `bootloader.c` as the README says. CMake refuses to build the bootloader without the
+two key headers; `-DBL_ALLOW_DEMO_KEY=ON` gets the public demo keys, which is fine for a
 bench but not for a board that leaves the desk.
 
 ## 1. Flash and boot (UART only, ST-Link only)
