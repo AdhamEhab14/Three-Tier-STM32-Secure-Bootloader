@@ -1,0 +1,59 @@
+# Requests both UDS servers must answer the same way, run in order from the default session
+# after the SecurityAccess boot delay. Format:  request | start of the response | what it shows
+#
+#   - tests/renode/test_uds_common.py replays this against the production command layer
+#   - the iso14229 server replays it in its on-chip self-test (bl_uds_vectors.h, made from this
+#     file by scripts/gen_uds_vectors.py; tests/test_uds_vectors_sync.py keeps the two in step)
+#
+# Only the leading bytes of a response are compared, so timing parameters and seeds are free.
+# Keep the list stateless towards SecurityAccess: no wrong keys here, they start a delay.
+
+# the default session offers very little
+27 01          | 7F 27 7F | no SecurityAccess in default
+31 01 FF 00    | 7F 31 7F | no routines in default
+34 00 44 08 01 50 00 00 00 00 10 | 7F 34 7F | no RequestDownload in default
+36 01 AA       | 7F 36 7F | no TransferData in default
+3E 00          | 7E 00    | TesterPresent works everywhere
+28 03 01       | 7F 28 7F | no CommunicationControl in default
+85 02          | 7F 85 7F | no ControlDTCSetting in default
+23 44 08 01 50 00 00 00 00 08 | 7F 23 7F | no ReadMemoryByAddress in default
+22 F1 86       | 62 F1 86 01 | active session reads back as default
+
+# session changes
+10 02          | 7F 10 22 | programming only through extended
+10 04          | 7F 10 22 | safety only through extended
+10 05          | 7F 10 12 | unknown session
+10 03          | 50 03    | extended is allowed from default
+22 F1 86       | 62 F1 86 03 | active session reads back as extended
+10 04          | 50 04    | safety is allowed from extended
+22 F1 86       | 62 F1 86 04 | active session reads back as safety
+10 02          | 7F 10 22 | safety does not go to programming
+10 03          | 7F 10 22 | safety does not go to extended
+10 01          | 50 01    | any session goes back to default
+10 03          | 50 03    | extended again
+10 02          | 50 02    | programming from extended
+10 03          | 7F 10 22 | programming does not go to extended
+10 01          | 50 01    | back to default
+
+# what the standard flash sequence asks for before the download
+10 03          | 50 03    | extended
+85 02          | C5 02    | DTC recording off
+28 03 01       | 68 03    | normal communication off
+85 01          | C5 01    | DTC recording on
+28 00 01       | 68 00    | normal communication on
+28 03          | 7F 28 13 | CommunicationControl needs its communication type
+23 44 08 01 50 00 00 00 00 08 | 7F 23 7F | read-back needs programming
+10 01          | 50 01    | back to default
+
+# services that need a bigger session or an unlock
+10 03          | 50 03    | extended
+34 00 44 08 01 50 00 00 00 00 10 | 7F 34 7F | download needs programming, extended is not enough
+27 01          | 67 01    | a seed is offered in extended
+10 02          | 50 02    | programming
+34 00 44 08 01 50 00 00 00 00 10 | 7F 34 33 | right session, still locked
+10 01          | 50 01    | back to default
+
+# malformed or unknown
+99             | 7F 99 11 | unknown service
+10             | 7F 10 13 | session request without its sub-function
+22 F1 00       | 7F 22 31 | unknown data identifier

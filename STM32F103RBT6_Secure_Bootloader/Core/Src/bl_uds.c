@@ -17,6 +17,7 @@
 #include "bl_seccrypto.h"
 #include "bl_secaccess.h"
 #include "bl_udspolicy.h"
+#include "bl_uds_vectors.h"
 #include <string.h>
 
 /* UDS addressing: requester -> FBL on 0x7E0, FBL -> requester on 0x7E8. */
@@ -38,6 +39,8 @@ uint32_t UDSMillis(void)
 {
     return HAL_GetTick();
 }
+
+static UDSServer_t g_srv;
 
 /* ==========================================================================
  *  Transport bridge: an iso14229 UDSTp_t backed by one isotp-c link.
@@ -75,6 +78,23 @@ static UDSTpSize_t bl_uds_tp_recv(UDSTp_t *hdl, uint8_t *buf, size_t bufsize,
         if (isotp_receive(tp->link[i], buf, (uint32_t)bufsize, &out_len) != ISOTP_RET_OK) {
             continue;
         }
+        /* Every request passes the same gate before the library sees it: the service has to
+           accept this addressing, work in the active session and have enough security (see
+           bl_udspolicy.c). Doing it here keeps the answer independent of which check the library
+           happens to make first. A refused functional request is not answered at all. */
+        if (out_len >= 1U) {
+            uint8_t nrc = BL_UdsGate(buf[0], g_srv.sessionType, g_srv.securityLevel,
+                                     (i == 0) ? BL_ADDR_PHYSICAL : BL_ADDR_FUNCTIONAL);
+            if (nrc != 0U) {
+                uint8_t neg[3];
+                neg[0] = 0x7FU; neg[1] = buf[0]; neg[2] = nrc;
+                if (i == 0) {
+                    (void)isotp_send(tp->link[0], neg, sizeof(neg));
+                }
+                g_srv.s3_session_timeout_timer = UDSMillis() + g_srv.s3_ms;   /* it was still a request */
+                return 0;
+            }
+        }
         if (info != NULL) {
             info->A_TA_Type = (i == 0) ? UDS_A_TA_TYPE_PHYSICAL : UDS_A_TA_TYPE_FUNCTIONAL;
             info->A_SA      = BL_UDS_ID_REQUEST;
@@ -99,7 +119,6 @@ static UDSTpStatus_t bl_uds_tp_poll(UDSTp_t *hdl)
 /* ==========================================================================
  *  UDS server instance
  * ========================================================================== */
-static UDSServer_t g_srv;
 static bl_uds_tp_t g_tp;
 static IsoTpLink   g_link;
 static IsoTpLink   g_link_func;                 /* functional requests: one frame, so a tiny buffer */
@@ -112,10 +131,10 @@ static uint8_t     g_link_rx[BL_UDS_LINK_BUF];
  *  Security access (0x27) - seed/key gate for the reprogramming services.
  *
  *  requestSeed = subfunction 0x01, sendKey = subfunction 0x02, unlocking
- *  security level 0x01. The seed/key relation here is a lightweight obfuscation,
- *  NOT the project's cryptographic root of trust: firmware images are still
- *  authenticated by their Ed25519 signature at install time. This gate only
- *  decides whether a UDS client may drive the download services.
+ *  security level 0x01. The key is the first 4 bytes of AES-CMAC(K, seed), K being the
+ *  product's SecurityAccess key. That is access control, not the project's root of trust:
+ *  firmware images are still authenticated by their Ed25519 signature at install time. This
+ *  gate only decides whether a UDS client may drive the download services.
  * ========================================================================== */
 #define BL_UDS_SEC_LEVEL   0x01U
 
@@ -155,7 +174,7 @@ static void bl_uds_key_from_seed(const uint8_t seed[4], uint8_t key[4])
  *  services only run once security is unlocked in a programming session.
  * ========================================================================== */
 #define BL_UDS_DL_BASE     SLOT_B_BASE     /* staging slot base (0x08015000) */
-#define BL_UDS_DL_SIZE     APP_MAX_SIZE    /* bytes the slot can hold         */
+#define BL_UDS_DL_SIZE     FBL_REGION_SIZE /* bytes the slot can hold (an FBL image fills it) */
 #define BL_UDS_FLASH_PAGE  1024U           /* F103 page size                  */
 #define BL_UDS_MAX_BLOCK   128U            /* TransferData message cap (fits our buffers) */
 #define BL_UDS_RID_ERASE   0xFF00U         /* routineIdentifier: erase staging slot */
@@ -192,25 +211,6 @@ static uint32_t bl_uds_crc32_region(uint32_t addr, uint32_t size)
     return crc ^ 0xFFFFFFFFU;
 }
 
-/* The service a library event belongs to, 0 for events that are not requests. */
-static uint8_t bl_uds_event_sid(UDSEvent_t event)
-{
-    switch (event) {
-    case UDS_EVT_DiagSessCtrl:          return 0x10U;
-    case UDS_EVT_EcuReset:              return 0x11U;
-    case UDS_EVT_ReadMemByAddr:         return 0x23U;
-    case UDS_EVT_SecAccessRequestSeed:
-    case UDS_EVT_SecAccessValidateKey:  return 0x27U;
-    case UDS_EVT_CommCtrl:              return 0x28U;
-    case UDS_EVT_RoutineCtrl:           return 0x31U;
-    case UDS_EVT_RequestDownload:       return 0x34U;
-    case UDS_EVT_TransferData:          return 0x36U;
-    case UDS_EVT_RequestTransferExit:   return 0x37U;
-    case UDS_EVT_ControlDTCSetting:     return 0x85U;
-    default:                            return 0U;
-    }
-}
-
 /* Drop everything a session or an unlock set up: used on a session change and on S3. */
 static void bl_uds_forget_session_state(void)
 {
@@ -230,19 +230,6 @@ static void bl_uds_system_reset(void)
    library builds the positive reply), or a negative response code to reject. */
 static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
 {
-    uint8_t sid = bl_uds_event_sid(event);
-
-    /* Every request passes the same gate: the service has to accept this addressing, work in
-       the active session and have enough security (see bl_udspolicy.c). */
-    if (sid != 0U) {
-        uint8_t addressing = (srv->r.info.A_TA_Type == UDS_A_TA_TYPE_FUNCTIONAL)
-                             ? BL_ADDR_FUNCTIONAL : BL_ADDR_PHYSICAL;
-        uint8_t gate = BL_UdsGate(sid, srv->sessionType, srv->securityLevel, addressing);
-        if (gate != 0U) {
-            return (UDSErr_t)gate;
-        }
-    }
-
     switch (event) {
     case UDS_EVT_DiagSessCtrl: {
         UDSDiagSessCtrlArgs_t *a = (UDSDiagSessCtrlArgs_t *)arg;
@@ -256,6 +243,24 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         srv->securityLevel = 0U;
         bl_uds_forget_session_state();
         return UDS_PositiveResponse;
+    }
+
+    case UDS_EVT_ReadDataByIdent: {
+        /* the identifiers the production command layer also answers (F190 and FD00 need
+           its metadata and self-test state, so they stay there) */
+        UDSRDBIArgs_t *a = (UDSRDBIArgs_t *)arg;
+        switch (a->dataId) {
+        case 0xF186U: {   /* active diagnostic session */
+            uint8_t session = srv->sessionType;
+            return (UDSErr_t)a->copy(srv, &session, 1U);
+        }
+        case 0xF195U: {   /* bootloader version */
+            const uint8_t ver[4] = { BL_VENDOR_ID, BL_SW_MAJOR, BL_SW_MINOR, BL_SW_PATCH };
+            return (UDSErr_t)a->copy(srv, ver, sizeof(ver));
+        }
+        default:
+            return UDS_NRC_RequestOutOfRange;
+        }
     }
 
     case UDS_EVT_SecAccessRequestSeed: {
@@ -366,7 +371,7 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         uint8_t  buf[BL_UDS_MAX_BLOCK];
         if (addr < BL_UDS_DL_BASE ||
             a->memSize == 0U ||
-            a->memSize > sizeof(buf) ||
+            a->memSize > BL_UDS_READ_MAX ||
             (addr + a->memSize) > (BL_UDS_DL_BASE + BL_UDS_DL_SIZE)) {
             return UDS_NRC_RequestOutOfRange;
         }
@@ -456,6 +461,9 @@ static uint32_t bl_uds_tester_xfer(IsoTpLink *tester,
     return 0;
 }
 
+/* 1-based index of the shared request that got a different answer, 0 when all matched */
+volatile uint8_t bl_uds_vec_fail;
+
 int BL_UDS_SelfTest(void)
 {
     /* A tester link that plays the diagnostic client for the exchange. */
@@ -484,6 +492,18 @@ int BL_UDS_SelfTest(void)
        checks below see the session rules and not the boot delay. */
     while ((int32_t)(UDSMillis() - g_srv.sec_access_boot_delay_timer) <= 0) {
         /* spin: ~1 s of real time on target; advances the tick on host */
+    }
+
+    /* The requests the production command layer must answer the same way
+       (tests/vectors/uds_common.txt). bl_uds_vec_fail says which one differed. */
+    for (uint32_t i = 0U; i < BL_UDS_VEC_COUNT; i++) {
+        const bl_uds_vec_t *v = &bl_uds_vectors[i];
+        n = bl_uds_tester_xfer(&tester, v->req, v->req_len, resp, sizeof(resp));
+        if (n < v->exp_len || memcmp(resp, v->exp, v->exp_len) != 0) {
+            bl_uds_vec_fail = (uint8_t)(i + 1U);
+            rc = 30;
+            goto done;
+        }
     }
 
     /* 0) The rules first. In the default session SecurityAccess is not available (0x7F), and

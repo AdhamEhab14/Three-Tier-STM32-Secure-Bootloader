@@ -37,4 +37,17 @@ def test_the_server_passes_its_own_self_test(selftest_board):
     for _ in range(8):                                 # a failure code blinks every 0.5 s
         levels.append((s.read_word(GPIOA_ODR) & LD2) != 0)
         s.idle(0.3)
-    assert all(levels), "LD2 is not solid on, so the self-test failed (levels seen: %s)" % levels
+    assert all(levels), "LD2 is not solid on, so the self-test failed (levels seen: %s)%s" % (levels, which_vector(s))
+
+
+def which_vector(s):
+    """If the shared requests were the problem, say which one (the firmware keeps its number)."""
+    import subprocess
+    nm = subprocess.run(["arm-none-eabi-nm", os.path.join(ROOT, BUILD, "fbl.elf")],
+                        capture_output=True, text=True).stdout
+    for line in nm.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == "bl_uds_vec_fail":
+            number = s.read_word(int(parts[0], 16)) & 0xFF
+            return "; shared request number %d got a different answer than the production server" % number if number else ""
+    return ""

@@ -37,11 +37,6 @@
 #define CBL_BIST             0x1DU   /* read the power-on self-test result */
 #define CBL_UDS              0x20U   /* wraps a UDS (ISO 14229) request as its payload */
 
-#define BL_VENDOR_ID   100U
-#define BL_SW_MAJOR    1U
-#define BL_SW_MINOR    5U
-#define BL_SW_PATCH    0U
-
 /* This FBL's own version, packed the same way as an image header's fw_version.
    A self-update is refused if the incoming FBL is older than this. */
 #define FBL_VERSION_PACKED  (((uint32_t)BL_SW_MAJOR << 16) | ((uint32_t)BL_SW_MINOR << 8) | (uint32_t)BL_SW_PATCH)
@@ -609,11 +604,14 @@ static void BL_Handle_LockBm(void)
 #define UDS_ECU_RESET         0x11U
 #define UDS_RDBI              0x22U
 #define UDS_SECURITY          0x27U
+#define UDS_READ_MEM          0x23U
+#define UDS_COMM_CTRL         0x28U
 #define UDS_ROUTINE           0x31U
 #define UDS_REQ_DOWNLOAD      0x34U
 #define UDS_TRANSFER_DATA     0x36U
 #define UDS_XFER_EXIT         0x37U
 #define UDS_TESTER_PRESENT    0x3EU
+#define UDS_DTC_SETTING       0x85U
 
 #define NRC_SERVICE_NOT_SUPP  0x11U
 #define NRC_SUBFUNC_NOT_SUPP  0x12U
@@ -676,7 +674,9 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
         return 2U;
 
     case UDS_SESSION: {
-        uint8_t sub = (len >= 2U) ? (req[1] & 0x7FU) : 0U;
+        uint8_t sub;
+        if (len < 2U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        sub = req[1] & 0x7FU;
         if (!BL_UdsSessionKnown(sub))
             return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
         if (!BL_UdsSessionChangeAllowed(uds_session, sub))
@@ -760,6 +760,31 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
             return uds_nrc(resp, sid, NRC_OUT_OF_RANGE);
         }
     }
+
+    case UDS_READ_MEM: {
+        /* [ALFID=0x44][addr:4][size:4]: read back from the staging slot so a client can check a download */
+        uint32_t addr, size;
+        if (len < 10U || req[1] != 0x44U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        addr = ((uint32_t)req[2] << 24) | ((uint32_t)req[3] << 16) | ((uint32_t)req[4] << 8) | req[5];
+        size = ((uint32_t)req[6] << 24) | ((uint32_t)req[7] << 16) | ((uint32_t)req[8] << 8) | req[9];
+        if (size == 0U || size > BL_UDS_READ_MAX || !BL_InStaging(addr, size))
+            return uds_nrc(resp, sid, NRC_OUT_OF_RANGE);
+        resp[0] = sid + UDS_POS;
+        memcpy(&resp[1], (const void *)addr, size);
+        return 1U + size;
+    }
+
+    /* The bootloader has no DTCs and no application traffic to silence, so these are accepted
+       as they stand: a standard flash sequence asks for them before the download. */
+    case UDS_COMM_CTRL:
+        if (len < 3U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        resp[0] = sid + UDS_POS; resp[1] = req[1] & 0x7FU;
+        return 2U;
+
+    case UDS_DTC_SETTING:
+        if (len < 2U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        resp[0] = sid + UDS_POS; resp[1] = req[1] & 0x7FU;
+        return 2U;
 
     case UDS_REQ_DOWNLOAD: {
         /* [DFI][ALFID][addr:4][size:4]; we require ALFID = 0x44 */
@@ -872,7 +897,7 @@ static void uds_s3_poll(void)
 static void BL_Handle_Uds(void)
 {
     /* frame = [LEN][CMD_UDS][UDS PDU][CRC32]; the PDU length is LEN - 1 - 4 */
-    uint8_t  udsresp[16 + IMG_HDR_SIZE];
+    uint8_t  udsresp[1U + BL_UDS_READ_MAX + 16U];
     uint32_t rlen = UDS_Handle(&bl_rx[2], (uint32_t)bl_rx[0] - 5U, udsresp);
     if (rlen == 0U || rlen > 200U) { BL_ReplyNACK(); return; }
     BL_ReplyData((uint8_t)rlen, udsresp);

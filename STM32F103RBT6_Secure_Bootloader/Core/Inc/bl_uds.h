@@ -40,6 +40,8 @@ void BL_UDS_Poll(void);
  *   8 = RequestTransferExit (0x37) rejected
  *   9 = ReadMemoryByAddress (0x23) read-back did not match what was written
  *  10 = RoutineControl CheckMemory (0x31 / 0xFF01) rejected or CRC mismatch
+ *  30 = one of the shared requests (tests/vectors/uds_common.txt) was answered differently
+ *       from the production command layer; bl_uds_vec_fail holds its 1-based number
  */
 int BL_UDS_SelfTest(void);
 

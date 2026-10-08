@@ -23,6 +23,14 @@
 
 #define FBL_BASE_ADDR   0x08004000U   /* the FBL region (what the BM boots)   */
 #define FBL_REGION_SIZE (40U * 1024U) /* whole FBL region                     */
+#define BL_UDS_READ_MAX 64U           /* most bytes one UDS ReadMemoryByAddress returns */
+
+/* what GET_VER and the UDS version identifier report */
+#define BL_VENDOR_ID   100U
+#define BL_SW_MAJOR    1U
+#define BL_SW_MINOR    5U
+#define BL_SW_PATCH    0U
+
 #define BM_STATE_ADDR   0x0801F000U   /* config page holding the FBL CRC record */
 #define BM_STATE_MAGIC  0xB007F00DU
 #define BM_FBL_VALID    1U    /* FBL confirmed good (record may be trusted or stale) */
