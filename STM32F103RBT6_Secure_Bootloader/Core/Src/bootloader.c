@@ -53,13 +53,15 @@ static const uint8_t BL_PUBLIC_KEY[32] = {
 
 /* Pre-shared ChaCha20 key. Firmware confidentiality only; the Ed25519 signature
    (over the staged ciphertext's hash) still provides authenticity + integrity.
-   Must match host/keys/bl_enckey.bin. */
-static const uint8_t BL_ENC_KEY[32] = {
-    0x28, 0xF1, 0x1D, 0xFA, 0xA1, 0x72, 0x28, 0x9C,
-    0x72, 0x1E, 0xF3, 0xF0, 0xD3, 0xB1, 0x98, 0xF6,
-    0x4A, 0xE3, 0xE3, 0x8F, 0xE5, 0x5E, 0x1D, 0x6C,
-    0x2C, 0x4F, 0x8A, 0x4F, 0x74, 0xD4, 0x06, 0xEA
-};
+   It is a secret, so it comes from a git-ignored header (sign_tool.py genenckey writes it
+   next to host/keys/bl_enckey.bin), never from this file. */
+#if defined(BL_ENC_KEY_HEADER)
+#include BL_ENC_KEY_HEADER
+#else
+#warning "Building with the PUBLIC demo image-encryption key: define BL_ENC_KEY_HEADER for anything that is not a demo"
+#include "bl_enckey_demo.h"
+#endif
+static const uint8_t BL_ENC_KEY[32] = BL_ENC_KEY_BYTES;
 #endif
 
 #define BL_RX_MAX      256U
