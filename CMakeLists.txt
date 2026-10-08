@@ -7,6 +7,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE MinSizeRel)
 endif()
+option(BL_TEST_KEYS "Build the FBL with the published TEST keys (emulator/CI only, never a release)" OFF)
+
 # The FBL must fit in 40 KB, so size is the default optimisation goal.
 set(CMAKE_C_FLAGS_MINSIZEREL "-Os -g3")
 set(CMAKE_C_FLAGS_RELEASE    "-O2 -g3")
@@ -62,5 +64,9 @@ fw(fbl           STM32F103RBT6_Secure_Bootloader   startup_stm32f103rbtx.s STM32
                  Core/ThirdParty/isotp-c Core/ThirdParty/iso14229)
 # iso14229 asks the integrator to name the platform; this is its documented default.
 target_compile_definitions(fbl.elf PRIVATE UDS_SYS=UDS_SYS_CUSTOM)
+if(BL_TEST_KEYS)
+  target_compile_definitions(fbl.elf PRIVATE BL_TEST_KEYS)
+  target_include_directories(fbl.elf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/keys)
+endif()
 fw(application   STM32F103RBT6_Application         startup_stm32f103rbtx.s STM32F103RBTX_FLASH.ld)
 fw(bluepill_bridge BluePill_Bridge                 startup_stm32f103c8tx.s STM32F103C8TX_FLASH.ld)

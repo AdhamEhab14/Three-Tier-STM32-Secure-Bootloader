@@ -43,6 +43,10 @@
    A self-update is refused if the incoming FBL is older than this. */
 #define FBL_VERSION_PACKED  (((uint32_t)BL_SW_MAJOR << 16) | ((uint32_t)BL_SW_MINOR << 8) | (uint32_t)BL_SW_PATCH)
 
+#ifdef BL_TEST_KEYS
+/* Emulator/CI builds trust the published TEST keys (tests/keys), never these. */
+#include "bl_test_keys.h"
+#else
 /* Our public key. Firmware signed with the matching private key is trusted. */
 static const uint8_t BL_PUBLIC_KEY[32] = {
     0x7F, 0xFB, 0xE9, 0xEC, 0xD0, 0x8D, 0xB6, 0x73, 0xA8, 0xC2, 0xBD, 0xCE, 0x3C, 0xC3, 0x36, 0x42,
@@ -58,6 +62,7 @@ static const uint8_t BL_ENC_KEY[32] = {
     0x4A, 0xE3, 0xE3, 0x8F, 0xE5, 0x5E, 0x1D, 0x6C,
     0x2C, 0x4F, 0x8A, 0x4F, 0x74, 0xD4, 0x06, 0xEA
 };
+#endif
 
 #define BL_RX_MAX      256U
 static uint8_t  bl_rx[BL_RX_MAX];        /* the current command frame      */

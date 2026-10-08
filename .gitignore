@@ -24,3 +24,5 @@ host/keys/
 __pycache__/
 *.pyc
 build/
+build-test/
+tests/renode/_work/

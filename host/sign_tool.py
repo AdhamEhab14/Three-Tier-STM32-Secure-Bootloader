@@ -26,7 +26,7 @@ import nacl.signing
 IMG_MAGIC = 0x21474D49   # "IMG!" - must match IMG_MAGIC in bootloader.h
 IMG_FLAG_ENCRYPTED = 0x0001
 
-KEYS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keys")
+KEYS = os.environ.get("BL_KEYS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "keys")
 PRIV = os.path.join(KEYS, "bl_private.bin")
 PUB  = os.path.join(KEYS, "bl_public.bin")
 ENCK = os.path.join(KEYS, "bl_enckey.bin")   # pre-shared ChaCha20 key (git-ignored)

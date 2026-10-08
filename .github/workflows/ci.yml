@@ -2,6 +2,8 @@
 #   firmware     - compiles all four firmware projects with arm-none-eabi-gcc
 #                  (HAL/CMSIS are committed, so a clean clone builds) and keeps
 #                  the .bin files as a build artifact.
+#   emulator     - boots the real Boot Manager + FBL in Renode and drives them
+#                  with the real host tool (signed install, anti-rollback, tamper).
 #   diagnostics  - off-target checks: ODX validation, the UDS conformance
 #                  suite (against the host model) and one run over a virtual
 #                  CAN bus.
@@ -33,6 +35,49 @@ jobs:
           name: firmware-bins
           path: build/*.bin
 
+  emulator:
+    runs-on: ubuntu-latest
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz             | tar xz -C ~/renode --strip-components=1
+
+      - name: Build firmware with the published TEST keys
+        run: |
+          cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+          cmake --build build-test
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pynacl pyserial
+
+      - name: Run the real firmware in Renode
+        env:
+          RENODE_PATH: ${{ github.workspace }}/../../../renode/renode
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          python -m pytest tests/renode -v
+
   diagnostics:
     runs-on: ubuntu-latest
     steps:
@@ -56,7 +101,7 @@ jobs:
 
       - name: UDS conformance suite
         working-directory: tests
-        run: pytest -v --html=report.html --self-contained-html
+        run: pytest -v --ignore=renode --html=report.html --self-contained-html
 
       - name: UDS sequence over the virtual CAN bus
         working-directory: tests
