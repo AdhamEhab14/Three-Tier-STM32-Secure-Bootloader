@@ -16,9 +16,13 @@ cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -D
 cmake --build build
 ```
 
+If you build in CubeIDE instead, refresh the projects first (new source files), and use the
+Debug configuration only for stepping through code: it is `-Og` now.
+
 Run `python host/sign_tool.py genkey`, `genenckey` and `genseckey` first, and paste the two
-public values into `bootloader.c` as the README says. A build without `BL_SEC_KEY_HEADER`
-uses the public demo key, which is fine for a bench but not for a board that leaves the desk.
+public values into `bootloader.c` as the README says. CMake refuses to build the bootloader
+without `BL_SEC_KEY_HEADER`; `-DBL_ALLOW_DEMO_KEY=ON` gets the public demo key, which is fine for a
+bench but not for a board that leaves the desk.
 
 ## 1. Flash and boot (UART only, ST-Link only)
 

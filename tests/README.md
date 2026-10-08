@@ -88,6 +88,8 @@ not answer that handshake, so this path is parked until that firmware lands.
 
 ## What it covers
 
+- **Both servers alike** - `vectors/uds_common.txt` is replayed against the production command
+  layer (`renode/test_uds_common.py`) and the iso14229 server (its on-chip self-test).
 - **Sessions** - default / programming / extended accepted; an unknown
   sub-function is refused with `subFunctionNotSupported (0x12)`.
 - **Unknown service** - refused with `serviceNotSupported (0x11)`.

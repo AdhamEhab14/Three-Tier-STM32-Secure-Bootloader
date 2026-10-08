@@ -38,7 +38,27 @@ All notable changes to this project are recorded here. The format follows
   address before, so any transport could overwrite the app or the bootloader without a
   signature. Hosts only ever used Slot B, so `flash` and `updatefbl` are unaffected.
 
+- **A CMake build now needs a SecurityAccess key**: `-DBL_SEC_KEY_HEADER=...`, or
+  `-DBL_ALLOW_DEMO_KEY=ON` to get the public demo key on purpose (CI does). The CubeIDE build
+  prints a compiler warning when it falls back to the demo key.
+- The Debug build is `-Og` instead of `-O0` (CMake and the CubeIDE project): at `-O0` the FBL
+  no longer fits its 40 KB region since the session rules went in. CI reports the headroom
+  of the release and Debug images and warns when it gets low.
+- The iso14229 server now gates every request where it arrives, so the answer does not depend
+  on which check the library makes first (it used to answer `36` in the default session with
+  0x24 instead of 0x7F), and it answers the active-session and version identifiers (0x22).
+  The production handler answers `10` without a sub-function with 0x13, as the standard asks,
+  and gained `23` (read back the staging slot, 64 bytes at most), `28` and `85`, which the
+  service table lists and the iso14229 server already had. `bl_host.py udsflash` now sends
+  `85 02` and `28 03 01` before the download, as the standard sequence does.
+  Found by replaying one shared request list against both servers (below).
+
 ### Tests
+- `tests/vectors/uds_common.txt` is a list of requests with the start of the expected answer.
+  The production command layer replays it in the emulator (`test_uds_common.py`) and the
+  iso14229 server replays it in its on-chip self-test, so the two servers cannot drift apart
+  unnoticed. `scripts/gen_uds_vectors.py` makes the C table from it; a test keeps them in step.
+- The framed ERASE/WRITE fence (`test_raw_commands.py`).
 - The session rules and service table on the real firmware (`test_sessions.py`), on the
   iso14229 server through its on-chip self-test run in the emulator, and in the Python model;
   the C table and the model are compared on every combination.
