@@ -34,7 +34,7 @@ jobs:
 
       - name: Run the conformance + fuzz suite
         working-directory: tests
-        run: pytest --html=report.html --self-contained-html
+        run: pytest --ignore=renode --html=report.html --self-contained-html   # the emulator suite runs in ci.yml
 
       - name: Generate the CAN capture
         working-directory: tests

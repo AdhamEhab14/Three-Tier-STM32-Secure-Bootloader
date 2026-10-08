@@ -1,4 +1,4 @@
-# Runs on every push. Two jobs:
+# Runs on every push. The jobs:
 #   firmware     - compiles all four firmware projects with arm-none-eabi-gcc
 #                  (HAL/CMSIS are committed, so a clean clone builds) and keeps
 #                  the .bin files as a build artifact.
@@ -8,6 +8,7 @@
 #   powercut     - cuts power at each kind of flash operation during an FBL self-update
 #                  and an app install, and checks the device recovers and the
 #                  rollback floor holds.
+#   esp32        - builds the ESP32 Wi-Fi / BLE gateway with PlatformIO.
 #   diagnostics  - off-target checks: ODX validation, the UDS conformance
 #                  suite (against the host model) and one run over a virtual
 #                  CAN bus.
@@ -192,3 +193,25 @@ jobs:
         with:
           name: uds-conformance-report
           path: tests/report.html
+
+  esp32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('ESP32_OTA_Gateway/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build the gateway
+        run: pio run -d ESP32_OTA_Gateway
