@@ -39,6 +39,8 @@
 /* USER CODE BEGIN PD */
 #define FBL_BASE     0x08004000U   /* the updatable Flash Bootloader lives here   */
 #define FBL_SIZE     0x0000A000U   /* whole FBL region = 40 KB                    */
+#define SLOT_B_BASE  0x08015000U   /* staging slot: holds the new FBL during a self-update */
+#define FLASH_PAGE   1024U
 #define BM_STATE_ADDR  0x0801F000U /* config page where the FBL records its CRC   */
 #define BM_STATE_MAGIC 0xB007F00DU
 #define BM_FBL_VALID    1U         /* FBL confirmed good (record may be stale)    */
@@ -79,6 +81,41 @@ static uint32_t bm_crc_region(uint32_t addr, uint32_t len)
         crc  = HAL_CRC_Accumulate(&hcrc, &word, 1U);
     }
     return crc;
+}
+
+/* Finish an FBL self-update that lost power half way.
+ *
+ * The FBL records the new image's CRC and the UPDATING flag before its updater touches
+ * the FBL region, and the new image stays in Slot B until the FBL has booted. So while
+ * Slot B still matches that CRC the copy can just be redone from the start, and a second
+ * cut during the redo leaves the same situation behind.
+ * Returns 1 once the FBL region matches the recorded CRC. */
+static int bm_recover_fbl(const bm_state_t *st)
+{
+    FLASH_EraseInitTypeDef erase;
+    uint32_t page_error = 0U;
+    int ok = 0;
+
+    if (bm_crc_region(SLOT_B_BASE, FBL_SIZE) != st->crc)
+        return 0;                                   /* nothing trustworthy to copy from */
+
+    erase.TypeErase   = FLASH_TYPEERASE_PAGES;
+    erase.PageAddress = FBL_BASE;
+    erase.NbPages     = FBL_SIZE / FLASH_PAGE;
+
+    HAL_FLASH_Unlock();
+    if (HAL_FLASHEx_Erase(&erase, &page_error) == HAL_OK)
+    {
+        ok = 1;
+        for (uint32_t i = 0U; i < FBL_SIZE && ok; i += 2U)
+        {
+            uint16_t hw = *(volatile uint16_t *)(SLOT_B_BASE + i);
+            ok = (HAL_FLASH_Program(FLASH_TYPEPROGRAM_HALFWORD, FBL_BASE + i, hw) == HAL_OK);
+        }
+    }
+    HAL_FLASH_Lock();
+
+    return ok && (bm_crc_region(FBL_BASE, FBL_SIZE) == st->crc);
 }
 /* USER CODE END 0 */
 
@@ -122,7 +159,11 @@ int main(void)
   if (st->magic != BM_STATE_MAGIC)
       fbl_ok = sp_ok;                                             /* first boot: sanity gate only  */
   else if (st->state == BM_FBL_UPDATING)
-      fbl_ok = (bm_crc_region(FBL_BASE, FBL_SIZE) == st->crc);    /* mid-update: strict, catch a partial FBL */
+  {
+      /* mid-update: fine only if the new image is already in place, otherwise
+         (old, half-erased or half-copied FBL) redo the copy from Slot B */
+      fbl_ok = (bm_crc_region(FBL_BASE, FBL_SIZE) == st->crc) || bm_recover_fbl(st);
+  }
   else /* BM_FBL_VALID */
       fbl_ok = (bm_crc_region(FBL_BASE, FBL_SIZE) == st->crc) || sp_ok; /* trust CRC, tolerate a stale record */
 
@@ -140,7 +181,7 @@ int main(void)
       ((pFunction)(*(volatile uint32_t *)(FBL_BASE + 4)))();   /* -> FBL, never returns */
   }
 
-  /* No valid FBL -> slow error blink (a recovery loader would go here). */
+  /* No valid FBL and nothing to recover from -> slow error blink. */
   while (1) { HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin); HAL_Delay(1000); }
 
   /* USER CODE END 2 */

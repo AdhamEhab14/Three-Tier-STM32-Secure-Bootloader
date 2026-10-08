@@ -58,7 +58,7 @@
 
             <DATA-OBJECT-PROP ID="DOP_KEY4">
               <SHORT-NAME>key_4bytes</SHORT-NAME>
-              <DESC><![CDATA[key[i] = seed[i] XOR {0x19,0x84,0xC0,0xDE}]]></DESC>
+              <DESC><![CDATA[key = first 4 bytes of AES-CMAC (RFC 4493) of the seed under the 128-bit SecurityAccess key]]></DESC>
               <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_BYTEFIELD" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>32</BIT-LENGTH></DIAG-CODED-TYPE>
               <PHYSICAL-TYPE BASE-DATA-TYPE="A_BYTEFIELD"/>
               <COMPU-METHOD><CATEGORY>IDENTICAL</CATEGORY></COMPU-METHOD>
@@ -92,12 +92,14 @@
                     <COMPU-SCALE><LOWER-LIMIT>17</LOWER-LIMIT><UPPER-LIMIT>17</UPPER-LIMIT><COMPU-CONST><VT>serviceNotSupported</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>18</LOWER-LIMIT><UPPER-LIMIT>18</UPPER-LIMIT><COMPU-CONST><VT>subFunctionNotSupported</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>19</LOWER-LIMIT><UPPER-LIMIT>19</UPPER-LIMIT><COMPU-CONST><VT>incorrectMessageLengthOrInvalidFormat</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>34</LOWER-LIMIT><UPPER-LIMIT>34</UPPER-LIMIT><COMPU-CONST><VT>conditionsNotCorrect</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>49</LOWER-LIMIT><UPPER-LIMIT>49</UPPER-LIMIT><COMPU-CONST><VT>requestOutOfRange</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>51</LOWER-LIMIT><UPPER-LIMIT>51</UPPER-LIMIT><COMPU-CONST><VT>securityAccessDenied</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>53</LOWER-LIMIT><UPPER-LIMIT>53</UPPER-LIMIT><COMPU-CONST><VT>invalidKey</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>54</LOWER-LIMIT><UPPER-LIMIT>54</UPPER-LIMIT><COMPU-CONST><VT>exceededNumberOfAttempts</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>55</LOWER-LIMIT><UPPER-LIMIT>55</UPPER-LIMIT><COMPU-CONST><VT>requiredTimeDelayNotExpired</VT></COMPU-CONST></COMPU-SCALE>
                     <COMPU-SCALE><LOWER-LIMIT>114</LOWER-LIMIT><UPPER-LIMIT>114</UPPER-LIMIT><COMPU-CONST><VT>generalProgrammingFailure</VT></COMPU-CONST></COMPU-SCALE>
+                    <COMPU-SCALE><LOWER-LIMIT>127</LOWER-LIMIT><UPPER-LIMIT>127</UPPER-LIMIT><COMPU-CONST><VT>serviceNotSupportedInActiveSession</VT></COMPU-CONST></COMPU-SCALE>
                   </COMPU-SCALES>
                 </COMPU-INTERNAL-TO-PHYS>
               </COMPU-METHOD>
@@ -112,7 +114,7 @@
           <DIAG-SERVICE ID="DS_DSC" SEMANTIC="SESSION">
             <SHORT-NAME>DiagnosticSessionControl</SHORT-NAME>
             <LONG-NAME>DiagnosticSessionControl (0x10)</LONG-NAME>
-            <DESC><![CDATA[sub 0x01 default, 0x02 programming, 0x03 extended. bl_uds.c UDS_EVT_DiagSessCtrl.]]></DESC>
+            <DESC><![CDATA[sub 0x01 default, 0x02 programming, 0x03 extended, 0x04 safety system. Programming and safety are only reached from extended and only leave to default (else NRC 0x22); S3 is 5 s. bl_uds.c UDS_EVT_DiagSessCtrl, rules in bl_udspolicy.c.]]></DESC>
             <REQUEST-REF ID-REF="REQ_DSC"/>
             <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_DSC"/></POS-RESPONSE-REFS>
             <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>

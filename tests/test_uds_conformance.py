@@ -10,7 +10,7 @@ specific negative response code. Run it with:
 against the in-process VirtualEcu, or later against the real board through a
 bridge transport. The rules are lifted straight from Core/Src/bl_uds.c.
 """
-from virtual_ecu import STAGING_BASE, STAGING_SIZE, SECRET
+from virtual_ecu import STAGING_BASE, STAGING_SIZE, key_for_seed
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -40,6 +40,7 @@ def test_default_session_accepted(uds):
 
 
 def test_programming_session_accepted(uds):
+    assert_positive(uds.send([0x10, 0x03]), 0x10)      # not directly from default
     assert_positive(uds.send([0x10, 0x02]), 0x10)
 
 
@@ -59,23 +60,27 @@ def test_unknown_service_rejected(uds):
 # ---- security access -------------------------------------------------------
 
 def test_seed_then_correct_key_unlocks(uds):
+    uds.enter_programming()
     seed = uds.send([0x27, 0x01])[2:6]
-    key = bytes(s ^ k for s, k in zip(seed, SECRET))
+    key = key_for_seed(seed)
     assert_positive(uds.send([0x27, 0x02, *key]), 0x27)
 
 
 def test_wrong_key_rejected(uds):
+    uds.enter_programming()
     uds.send([0x27, 0x01])
     bad_key = [0x00, 0x00, 0x00, 0x00]
     assert_nrc(uds.send([0x27, 0x02, *bad_key]), 0x27, 0x35)
 
 
 def test_key_wrong_length_rejected(uds):
+    uds.enter_programming()
     uds.send([0x27, 0x01])
     assert_nrc(uds.send([0x27, 0x02, 0x11, 0x22]), 0x27, 0x35)
 
 
 def test_locks_after_repeated_bad_keys(uds):
+    uds.enter_programming()
     uds.send([0x27, 0x01])
     for _ in range(3):
         uds.send([0x27, 0x02, 0, 0, 0, 0])
@@ -126,10 +131,12 @@ def test_check_memory_incorrect_length_rejected(uds):
 # ---- services accepted to keep the bus quiet during programming ------------
 
 def test_communication_control_accepted(uds):
+    uds.send([0x10, 0x03])                             # not offered in the default session
     assert_positive(uds.send([0x28, 0x03, 0x01]), 0x28)
 
 
 def test_control_dtc_setting_accepted(uds):
+    uds.send([0x10, 0x03])
     assert_positive(uds.send([0x85, 0x02]), 0x85)
 
 

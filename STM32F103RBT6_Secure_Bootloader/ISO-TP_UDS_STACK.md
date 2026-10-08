@@ -62,11 +62,31 @@ isotp-c transport    --  bl_isotp.c -->  CAN1 (bxCAN)
 New firmware is streamed into **Slot B**, the A/B staging slot. The Ed25519 signature check and the
 copy-into-Slot-A swap remain the responsibility of the existing command layer.
 
+### Sessions and per-service rules
+
+Four sessions (`01` default, `02` programming, `03` extended, `04` safety system), one active at a time,
+default after power-up. Default can only go to extended; extended to any; programming and safety only back
+to default, so a download is always preceded by `10 03` then `10 02`. A change that is not allowed is
+answered `0x22`. A session change drops the unlock, and 5 s without a request (S3) returns to default.
+
+Each service has a row in `bl_udspolicy.c`: the sessions it works in, the security level it needs and the
+addressing it accepts. A request outside that is refused before the service sees it (`0x7F` wrong session,
+`0x33` locked, `0x11` physical-only service addressed functionally; a refused functional request is not
+answered at all, as the standard asks). Requests on `0x7DF` are functional, accepted as single frames;
+replies always go out on `0x7E8`. The production command layer applies the same table.
+
 ### Security
 
 The `0x27` seed/key is a session unlock, not the cryptographic root of trust. Firmware images remain
 authenticated by their Ed25519 signature at install time, which this module does not change; the
 seed/key only gates whether a client may start a download.
+
+The key is the first 4 bytes of AES-CMAC (RFC 4493) of the seed under a 128-bit key built into the
+firmware (`bl_seccrypto.c`), and each seed works for one attempt. The seed is itself derived under that
+key from a counter, the tick and the CPU cycle counter, so it cannot be predicted without the key. The
+brute-force policy (`bl_secaccess.c`) is shared with the production command layer: no `0x27` for 1 s
+after power-up (`0x37`), 1 s after a wrong key, 10 s once three wrong keys have piled up (`0x36`). With
+a 32-bit key that holds an online guesser to about three tries per ten seconds.
 
 ## Build switches
 

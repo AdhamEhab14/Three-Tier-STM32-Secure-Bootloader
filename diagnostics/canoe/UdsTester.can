@@ -7,7 +7,7 @@
  * drives the full UDS reprogramming sequence against the bootloader's iso14229
  * server exactly as host/uds_client.py does over real CAN:
  *
- *   session -> seed/key -> erase -> RequestDownload -> TransferData
+ *   extended -> programming session -> seed/key -> erase -> RequestDownload -> TransferData
  *           -> RequestTransferExit -> ReadMemoryByAddress (read-back)
  *           -> RoutineControl CheckMemory (CRC-32)
  *
@@ -19,13 +19,16 @@
  * minimal (block size 0, no STmin) because a bench tester never needs more.
  */
 
+includes
+{
+  #include "seckey.cin"   // keyForSeed(): first 4 bytes of AES-CMAC(K, seed)
+}
+
 variables
 {
   const dword REQ_ID  = 0x7E0;   // tester -> ECU
   const dword RESP_ID = 0x7E8;   // ECU -> tester
 
-  // Shared secret behind SecurityAccess: key[i] = seed[i] XOR SECRET[i].
-  const byte  SECRET[4]     = {0x19, 0x84, 0xC0, 0xDE};
   const dword STAGING_BASE  = 0x08015000;   // SLOT_B_BASE, the download window
 
   // The 8 bytes we program and then read back to prove the round trip.
@@ -35,7 +38,7 @@ variables
 
   // Where we are in the sequence == the reply we are currently waiting for.
   enum SeqState {
-    S_IDLE, S_DSC, S_SEED, S_KEY, S_ERASE, S_RD, S_TD, S_EXIT, S_READ, S_CHECK
+    S_IDLE, S_EXT, S_DSC, S_SEED, S_KEY, S_ERASE, S_RD, S_TD, S_EXIT, S_READ, S_CHECK
   };
   enum SeqState gState = S_IDLE;
 
@@ -154,6 +157,14 @@ void handleReply(byte data[], dword len)
 
   switch (gState) {
 
+  case S_EXT:
+    if (len < 2 || data[0] != 0x50 || data[1] != 0x03) { seqFail("SessionControl (extended)", data, len); return; }
+    write("  ok  extended session");
+    gState = S_DSC;
+    req[0] = 0x10; req[1] = 0x02;          // programming can only be entered from extended
+    isotpSend(req, 2);
+    break;
+
   case S_DSC:
     if (len < 2 || data[0] != 0x50 || data[1] != 0x02) { seqFail("SessionControl", data, len); return; }
     write("  ok  programming session");
@@ -164,7 +175,8 @@ void handleReply(byte data[], dword len)
 
   case S_SEED:
     if (len < 6 || data[0] != 0x67 || data[1] != 0x01) { seqFail("requestSeed", data, len); return; }
-    for (i = 0; i < 4; i++) { gSeed[i] = data[2 + i]; key[i] = gSeed[i] ^ SECRET[i]; }
+    for (i = 0; i < 4; i++) gSeed[i] = data[2 + i];
+    keyForSeed(gSeed, key);
     write("  ok  seed %02X %02X %02X %02X", gSeed[0], gSeed[1], gSeed[2], gSeed[3]);
     gState = S_KEY;
     req[0] = 0x27; req[1] = 0x02;
@@ -247,8 +259,8 @@ on key 'r'
 {
   byte req[2];
   write("==== UDS tester: starting reprogramming sequence ====");
-  gState = S_DSC;
-  req[0] = 0x10; req[1] = 0x02;          // DiagnosticSessionControl -> programming
+  gState = S_EXT;
+  req[0] = 0x10; req[1] = 0x03;          // DiagnosticSessionControl -> extended first
   isotpSend(req, 2);
 }
 

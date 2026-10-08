@@ -26,3 +26,9 @@ __pycache__/
 build/
 build-test/
 tests/renode/_work/
+build-udsself/
+build-strict/
+build-debug/
+
+# ---- ESP32 gateway: your own Wi-Fi password ----
+ESP32_OTA_Gateway/src/gateway_secrets.h

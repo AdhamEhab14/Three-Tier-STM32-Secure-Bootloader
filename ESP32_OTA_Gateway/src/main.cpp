@@ -1,4 +1,4 @@
-x/*
+/*
  * ESP32 WiFi + BLE OTA Gateway - part of the STM32F103RBT6 three-tier secure bootloader.
  * Author: Adham Ehab   Date: 18/08/2026
  *
@@ -25,8 +25,17 @@ x/*
 #include <WiFi.h>
 #include <NimBLEDevice.h>
 
+/* Your own access-point password goes in src/gateway_secrets.h (git-ignored; copy
+   gateway_secrets.example.h). Without it the board uses the published default below. */
+#if __has_include("gateway_secrets.h")
+#include "gateway_secrets.h"
+#else
+#warning "Using the published default Wi-Fi password: add src/gateway_secrets.h"
+#define GATEWAY_AP_PASS "flashme123"
+#endif
+
 static const char    *AP_SSID    = "STM32-OTA-Gateway";
-static const char    *AP_PASS    = "flashme123";   /* >= 8 chars for WPA2 */
+static const char    *AP_PASS    = GATEWAY_AP_PASS;   /* >= 8 chars for WPA2 */
 static const char    *BLE_NAME   = "STM32-OTA-BLE";
 static const uint16_t TCP_PORT   = 3333;
 static const uint32_t STM32_BAUD = 115200;

@@ -20,6 +20,11 @@ the A/B staging slot and never runs the install routine, so the live app is
 never touched.
 """
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "host"))
+import seckey  # noqa: E402
+import os
 
 import pytest
 
@@ -27,14 +32,13 @@ HW_PORT = os.environ.get("HW_PORT")
 pytestmark = pytest.mark.skipif(
     not HW_PORT, reason="set HW_PORT (e.g. can:COM6) to run against the board")
 
-UDS_KEY_SECRET = 0x5A3C96E1        # must match bootloader.c
 SLOT_B_BASE = 0x08015000           # staging slot; RequestDownload only accepts this
 
 
 def prod_key(seed):
-    """key = rotate-left-3(seed) XOR secret - the production uds_key_from_seed()."""
-    rotated = ((seed << 3) | (seed >> 29)) & 0xFFFFFFFF
-    return rotated ^ UDS_KEY_SECRET
+    """The production key for a seed (int): first 4 bytes of AES-CMAC(K, seed), as an int.
+    K comes from BL_SEC_KEY_FILE / BL_KEYS_DIR, else the public demo key (see host/seckey.py)."""
+    return int.from_bytes(seckey.key_for_seed(seed.to_bytes(4, "big")), "big")
 
 
 @pytest.fixture(scope="module")
@@ -61,10 +65,16 @@ def be(value, n):
     return list(value.to_bytes(n, "big"))
 
 
+def to_programming(hw):
+    """Programming can only be entered from the extended session."""
+    hw.request([0x10, 0x03])
+    return hw.request([0x10, 0x02])
+
+
 def unlock(hw):
     """Programming session + seed/key. A session change re-locks, so this always
     starts from a known state."""
-    hw.request([0x10, 0x02])
+    to_programming(hw)
     seed = int.from_bytes(hw.request([0x27, 0x01])[2:6], "big")
     return hw.request([0x27, 0x02, *be(prod_key(seed), 4)])
 
@@ -76,7 +86,12 @@ def test_default_session(hw):
 
 
 def test_programming_session(hw):
-    positive(hw.request([0x10, 0x02]), 0x10)
+    positive(to_programming(hw), 0x10)
+
+
+def test_programming_session_is_not_reachable_from_default(hw):
+    hw.request([0x10, 0x01])
+    nrc(hw.request([0x10, 0x02]), 0x10, 0x22)
 
 
 def test_bad_session_subfunction(hw):
@@ -115,13 +130,13 @@ def test_seed_key_unlocks(hw):
 
 
 def test_wrong_key_rejected(hw):
-    hw.request([0x10, 0x02])
+    to_programming(hw)
     hw.request([0x27, 0x01])
     nrc(hw.request([0x27, 0x02, 0x00, 0x00, 0x00, 0x00]), 0x27, 0x35)
 
 
 def test_sendkey_wrong_length(hw):
-    hw.request([0x10, 0x02])
+    to_programming(hw)
     hw.request([0x27, 0x01])
     nrc(hw.request([0x27, 0x02, 0x11, 0x22]), 0x27, 0x13)
 
@@ -129,7 +144,7 @@ def test_sendkey_wrong_length(hw):
 # ---- security gate & range checks on the download services -----------------
 
 def test_download_requires_security(hw):
-    hw.request([0x10, 0x02])                       # programming session, still locked
+    to_programming(hw)                             # programming session, still locked
     req = [0x34, 0x00, 0x44] + be(SLOT_B_BASE, 4) + be(8, 4)
     nrc(hw.request(req), 0x34, 0x33)
 

@@ -45,11 +45,19 @@ in the hand-rolled command layer, not in `bl_uds.c`.
 
 ### Key facts encoded
 
-- **Seed/key:** 4-byte seed; `key[i] = seed[i] XOR {0x19,0x84,0xC0,0xDE}`, security level `0x01`.
+- **Seed/key:** 4-byte seed; the key is the first 4 bytes of AES-CMAC (RFC 4493) of the seed under a
+  128-bit key, security level `0x01`. No `0x27` for 1 s after power-up (`0x37`); after a wrong key 1 s
+  before the next try, from the 3rd wrong key in a row 10 s (`0x36` while waiting).
 - **Download window:** address must lie inside the A/B **staging slot** (`SLOT_B_BASE 0x08015000`,
   `APP_MAX_SIZE`), else `requestOutOfRange (0x31)`. `maxNumberOfBlockLength = 128`.
 - **CheckMemory CRC:** reflected CRC-32, poly `0xEDB88320`, init `0xFFFFFFFF`, final XOR.
-- **NRC table:** `0x11 0x12 0x13 0x31 0x33 0x35 0x36 0x37 0x72` — the exact set the server and
+- **Sessions:** `01` default, `02` programming, `03` extended, `04` safety system. Default goes to extended
+  only; extended to any; programming and safety only back to default (`0x22` otherwise). A session change
+  re-locks security; 5 s without a request (S3) or a reset means default.
+- **Per-service rules:** each service has the sessions it works in, the security level it needs and the
+  addressing it accepts (`0x7F` wrong session, `0x33` not unlocked, `0x11` physical-only service addressed
+  functionally). The table is in `bl_udspolicy.c`.
+- **NRC table:** `0x11 0x12 0x13 0x22 0x31 0x33 0x35 0x36 0x37 0x72 0x7F` — the exact set the server and
   the iso14229 library emit.
 
 ### Validating / opening it

@@ -48,6 +48,24 @@ trace a bus monitor would have captured.
 python uds_bus_sim.py
 ```
 
+## Running the firmware in the emulator
+
+`renode/` boots the real Boot Manager and FBL in [Renode](https://renode.io) (1.17) and talks to
+them with the real host tool, no board needed. Build with the published test keys first:
+
+```
+cmake -S . -B build-test -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON
+cmake --build build-test
+cmake -S . -B build-udsself -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+cmake --build build-udsself
+cd tests/renode
+python -m pytest -m "not powercut"     # install, security, sessions, raw commands, both UDS servers (about 20 min)
+python -m pytest -m powercut           # power cut at every kind of flash operation (about 30 min)
+```
+
+Set `RENODE_PATH` if `renode` is not on the PATH. Without Renode or the builds the tests skip.
+Needs `pyserial` and `pynacl`.
+
 ## Running against real hardware
 
 The firmware has two UDS servers, so there are two hardware paths.
@@ -88,12 +106,18 @@ not answer that handshake, so this path is parked until that firmware lands.
 
 ## What it covers
 
+- **Both servers alike** - `vectors/uds_common.txt` is replayed against the production command
+  layer (`renode/test_uds_common.py`) and the iso14229 server (its on-chip self-test).
 - **Sessions** - default / programming / extended accepted; an unknown
   sub-function is refused with `subFunctionNotSupported (0x12)`.
 - **Unknown service** - refused with `serviceNotSupported (0x11)`.
-- **Security access** - the correct seed/key (`key = seed XOR 19 84 C0 DE`)
-  unlocks; a wrong key or a wrong-length key gives `invalidKey (0x35)`; repeated
-  bad keys lock the level with `exceededNumberOfAttempts (0x36)`.
+- **Sessions** - the four sessions, which changes are allowed, the lock on a session change, S3, and
+  functional addressing (`test_uds_sessions.py`); the C rules are compared with the model on every
+  combination in `test_udspolicy.py`.
+- **Security access** - the correct seed/key (first 4 bytes of AES-CMAC of the
+  seed, see `host/seckey.py`) unlocks; a wrong key or a wrong-length key gives
+  `invalidKey (0x35)`; repeated bad keys lock the level with
+  `exceededNumberOfAttempts (0x36)`. The model uses the public demo key.
 - **Security gate** - RoutineControl and RequestDownload are refused with
   `securityAccessDenied (0x33)` until the level is unlocked in a programming
   session.

@@ -26,7 +26,17 @@ User callbacks the firmware must provide (declared in isotp_user.h):
 
 ## Notes
 
-- Vendored as-is; no upstream source was modified. Any integration lives in the
-  firmware's own glue files under Core/Src, not inside these folders.
+- Vendored as-is apart from the one change listed under "Local changes" below. Any other
+  integration lives in the firmware's own glue files under Core/Src, not inside these folders.
 - To update: re-copy the listed files from the pinned commit above (or a newer
   one) and update the commit hashes here.
+
+## Local changes to vendored code
+
+- `iso14229/iso14229.h`: the delay after a wrong SecurityAccess key
+  (`UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_AUTH_FAIL_DELAY_MS`) is a call to
+  `BL_UdsFailDelayMs()` (in `bl_uds.c`) instead of a constant, so the bootloader can lock
+  out for 10 s after 3 wrong keys. Re-apply this when updating the library. It is a source change
+  rather than a build flag because the firmware is built by CMake and by the CubeIDE project,
+  and a flag would have to be kept in sync in both (a missing one would silently fall back to a
+  fixed 1 s delay).

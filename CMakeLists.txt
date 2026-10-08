@@ -7,12 +7,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE MinSizeRel)
 endif()
+set(BL_SEC_KEY_HEADER "" CACHE FILEPATH "Header defining BL_SEC_KEY_BYTES: the SecurityAccess key to build in (default: the public demo key)")
 option(BL_TEST_KEYS "Build the FBL with the published TEST keys (emulator/CI only, never a release)" OFF)
+set(BL_ENC_KEY_HEADER "" CACHE FILEPATH "Header defining BL_ENC_KEY_BYTES: the ChaCha20 image-encryption key to build in")
+option(BL_ALLOW_DEMO_KEY "Let the FBL build with the PUBLIC demo keys where no key header is given" OFF)
 
 # The FBL must fit in 40 KB, so size is the default optimisation goal.
 set(CMAKE_C_FLAGS_MINSIZEREL "-Os -g3")
 set(CMAKE_C_FLAGS_RELEASE    "-O2 -g3")
-set(CMAKE_C_FLAGS_DEBUG      "-O0 -g3")
+# -Og, not -O0: at -O0 the FBL no longer fits its 40 KB region
+set(CMAKE_C_FLAGS_DEBUG      "-Og -g3")
 
 # One firmware target per project folder. Each project owns its HAL copy,
 # linker script and startup file, exactly as STM32CubeIDE lays them out.
@@ -38,7 +42,8 @@ function(fw target dir startup ld)
     target_include_directories(${target}.elf PRIVATE ${dir}/${inc})
   endforeach()
 
-  target_compile_definitions(${target}.elf PRIVATE USE_HAL_DRIVER STM32F103xB)
+  # same symbols the CubeIDE project defines (it adds DEBUG only to its Debug configuration)
+  target_compile_definitions(${target}.elf PRIVATE USE_HAL_DRIVER STM32F103xB $<$<CONFIG:Debug>:DEBUG>)
 
   set(cpu -mcpu=cortex-m3 -mthumb)
   target_compile_options(${target}.elf PRIVATE ${cpu}
@@ -63,10 +68,66 @@ fw(boot_manager  BootManager                       startup_stm32f103rbtx.s STM32
 fw(fbl           STM32F103RBT6_Secure_Bootloader   startup_stm32f103rbtx.s STM32F103RBTX_FLASH.ld
                  Core/ThirdParty/isotp-c Core/ThirdParty/iso14229)
 # iso14229 asks the integrator to name the platform; this is its documented default.
-target_compile_definitions(fbl.elf PRIVATE UDS_SYS=UDS_SYS_CUSTOM)
+target_compile_definitions(fbl.elf PRIVATE UDS_SYS=UDS_SYS_CUSTOM
+                           UDS_SERVER_RECV_BUF_SIZE=256 UDS_SERVER_SEND_BUF_SIZE=256)   # as in the Cube project
+option(BL_UDS_SELFTEST "Boot into the iso14229 server's on-chip self-test instead of the bootloader (LD2 solid = pass)" OFF)
+if(BL_UDS_SELFTEST)
+  target_compile_definitions(fbl.elf PRIVATE BL_UDS_SELFTEST_ON_BOOT=1)
+endif()
 if(BL_TEST_KEYS)
   target_compile_definitions(fbl.elf PRIVATE BL_TEST_KEYS)
   target_include_directories(fbl.elf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/keys)
+else()
+  # A deployment's own secrets, each from a git-ignored header that sign_tool.py writes. The
+  # demo keys are public, so a build has to ask for them by name instead of getting them by accident.
+  set(_missing "")
+  if(BL_SEC_KEY_HEADER)
+    get_filename_component(_sec_key_header "${BL_SEC_KEY_HEADER}" ABSOLUTE)
+    target_compile_definitions(fbl.elf PRIVATE "BL_SEC_KEY_HEADER=\"${_sec_key_header}\"")
+  else()
+    list(APPEND _missing "-DBL_SEC_KEY_HEADER=... (sign_tool.py genseckey)")
+  endif()
+  if(BL_ENC_KEY_HEADER)
+    get_filename_component(_enc_key_header "${BL_ENC_KEY_HEADER}" ABSOLUTE)
+    target_compile_definitions(fbl.elf PRIVATE "BL_ENC_KEY_HEADER=\"${_enc_key_header}\"")
+  else()
+    list(APPEND _missing "-DBL_ENC_KEY_HEADER=... (sign_tool.py genenckey)")
+  endif()
+  if(_missing)
+    list(JOIN _missing ", " _missing)
+    if(NOT BL_ALLOW_DEMO_KEY)
+      message(FATAL_ERROR "Missing keys: ${_missing}. Or pass -DBL_ALLOW_DEMO_KEY=ON for a demo build with the PUBLIC demo keys.")
+    endif()
+    message(WARNING "Building with PUBLIC demo keys in place of: ${_missing}")
+  endif()
 endif()
 fw(application   STM32F103RBT6_Application         startup_stm32f103rbtx.s STM32F103RBTX_FLASH.ld)
 fw(bluepill_bridge BluePill_Bridge                 startup_stm32f103c8tx.s STM32F103C8TX_FLASH.ld)
+# Throwaway two-board test: the Blue Pill becomes a UDS client for the Nucleo's iso14229 server.
+option(BP_UDS_CLIENT "Build the Blue Pill as a UDS test client (uses the FBL's seccrypto for SecurityAccess)" OFF)
+if(BP_UDS_CLIENT)
+  set(_fbl_core ${CMAKE_CURRENT_SOURCE_DIR}/STM32F103RBT6_Secure_Bootloader/Core)
+  target_sources(bluepill_bridge.elf PRIVATE ${_fbl_core}/Src/bl_seccrypto.c)
+  target_include_directories(bluepill_bridge.elf PRIVATE ${_fbl_core}/Inc)
+  target_compile_definitions(bluepill_bridge.elf PRIVATE BP_UDS_CLIENT_ON_BOOT=1)
+  if(BL_TEST_KEYS)
+    target_compile_definitions(bluepill_bridge.elf PRIVATE BL_TEST_KEYS)
+    target_include_directories(bluepill_bridge.elf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/keys)
+  elseif(BL_SEC_KEY_HEADER)
+    target_compile_definitions(bluepill_bridge.elf PRIVATE "BL_SEC_KEY_HEADER=\"${_sec_key_header}\"")
+  endif()
+endif()
+
+# Strict checking of the hand-written sources (not the generated Cube code, the HAL or the vendored
+# libraries): extra warnings as errors, and GCC's static analyzer.
+option(BL_STRICT "Strict warnings as errors and -fanalyzer on our own sources" OFF)
+if(BL_STRICT)
+  set(_core ${CMAKE_CURRENT_SOURCE_DIR}/STM32F103RBT6_Secure_Bootloader/Core/Src)
+  set(_own
+    ${_core}/bootloader.c ${_core}/bl_uds.c ${_core}/bl_isotp.c ${_core}/bl_secaccess.c
+    ${_core}/bl_seccrypto.c ${_core}/bl_udspolicy.c ${_core}/can_bl.c ${_core}/flash.c
+    ${_core}/flash_if.c ${_core}/sbl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/BootManager/Core/Src/main.c)
+  set_source_files_properties(${_own} PROPERTIES COMPILE_OPTIONS
+    "-Wextra;-Wshadow;-Wpointer-arith;-Wcast-align;-Wstrict-prototypes;-Wformat=2;-fanalyzer;-Werror")
+endif()

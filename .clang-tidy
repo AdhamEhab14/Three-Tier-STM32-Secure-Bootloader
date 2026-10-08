@@ -1,0 +1,24 @@
+# Used by scripts/lint.sh. Only our own sources are checked (see HeaderFilterRegex); the
+# generated Cube code, the HAL and the vendored libraries are left alone.
+#
+# Left out on purpose:
+#   easily-swappable-parameters   every (addr, len)-style API trips it
+#   implicit-widening-...         a 32-bit target, so unsigned * unsigned as an index is fine
+#   reserved-identifier           the Cube and CMSIS names (__IO and friends)
+#   insecureAPI.DeprecatedOrUnsafeBufferHandling   wants the optional C11 Annex K functions
+#   deadcode.DeadStores           defensive initialisations
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-deadcode.DeadStores
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(Core/Inc/(bl_|bootloader|flash|can_bl)|Core/Src/(bl_|bootloader|can_bl|flash|sbl))'

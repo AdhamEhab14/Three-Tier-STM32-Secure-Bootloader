@@ -24,6 +24,8 @@ Requires: pip install pyserial   (plus 'bleak' only for a ble: transport)
 import sys
 import struct
 import socket
+import time
+import seckey
 import serial
 
 # ---- protocol constants ----
@@ -236,9 +238,9 @@ def bist(ser):
 
 
 # ---- UDS (ISO 14229) client, tunnelled through CMD_UDS over any transport ----
-def uds_key_from_seed(seed):
-    k = ((seed << 3) | (seed >> 29)) & 0xFFFFFFFF   # rotate left 3, must match the FBL
-    return (k ^ 0x5A3C96E1) & 0xFFFFFFFF
+def uds_key_from_seed(seed4):
+    """The 4-byte SecurityAccess answer: first 4 bytes of AES-CMAC(K, seed) (see seckey.py)."""
+    return seckey.key_for_seed(seed4)
 
 
 def uds_req(ser, pdu, desc):
@@ -249,6 +251,26 @@ def uds_req(ser, pdu, desc):
     if len(p) >= 3 and p[0] == 0x7F:
         print(f"{desc}: negative response (service 0x{p[1]:02X}, NRC 0x{p[2]:02X})"); return None
     return p
+
+
+def uds_unlock(ser):
+    """SecurityAccess: request a seed, answer with its key. The board refuses 0x27 for a second
+    after power-up (NRC 0x37), so that one is waited out; a lockout (0x36) is reported, not retried."""
+    for _ in range(5):
+        ok, r = transact(ser, CMD_UDS, bytes([0x27, 0x01]))
+        if not ok:
+            print("requestSeed: no/framing-level reply"); return False
+        if len(r) >= 3 and r[0] == 0x7F:
+            if r[2] == 0x37:
+                getattr(ser, "sleep", time.sleep)(1.1); continue
+            if r[2] == 0x36:
+                print("requestSeed: locked out after wrong keys, try again in 10 s"); return False
+            print(f"requestSeed: negative response (NRC 0x{r[2]:02X})"); return False
+        if len(r) < 6: return False
+        key = uds_key_from_seed(bytes(r[2:6]))
+        if uds_req(ser, [0x27, 0x02] + list(key), "sendKey") is None: return False
+        return True
+    print("requestSeed: still inside the boot delay"); return False
 
 
 def udsinfo(ser):
@@ -273,15 +295,15 @@ def udsflash(ser, path):
     img = open(path + (".enc" if encrypted else ""), "rb").read()
     tag = "encrypted " if encrypted else ""
 
+    if uds_req(ser, [0x10, 0x03], "extended session") is None: return   # programming is only reachable from extended
+    # the usual flash sequence quiets the ECU while still in extended; the bootloader has
+    # nothing to silence but accepts both
+    if uds_req(ser, [0x85, 0x02], "DTC recording off") is None: return
+    if uds_req(ser, [0x28, 0x03, 0x01], "communication off") is None: return
     if uds_req(ser, [0x10, 0x02], "session") is None: return          # programming session
     print("Programming session.")
 
-    r = uds_req(ser, [0x27, 0x01], "requestSeed")                     # security access
-    if r is None or len(r) < 6: return
-    seed = (r[2] << 24) | (r[3] << 16) | (r[4] << 8) | r[5]
-    key = uds_key_from_seed(seed)
-    if uds_req(ser, [0x27, 0x02, (key >> 24) & 0xFF, (key >> 16) & 0xFF,
-                     (key >> 8) & 0xFF, key & 0xFF], "sendKey") is None: return
+    if not uds_unlock(ser): return                                    # security access
     print("Unlocked.")
 
     size = len(img)

@@ -14,6 +14,9 @@
 #include <string.h>     /* memcpy / memcmp */
 #include "bootloader.h"
 #include "usart.h"      /* huart2 */
+#include "bl_seccrypto.h"
+#include "bl_secaccess.h"
+#include "bl_udspolicy.h"
 #include "crc.h"        /* hcrc   */
 #include "flash_if.h"   /* FlashIf_ErasePages / FlashIf_Write */
 #include "tweetnacl.h"  /* crypto_hash + crypto_sign_open      */
@@ -34,11 +37,6 @@
 #define CBL_BIST             0x1DU   /* read the power-on self-test result */
 #define CBL_UDS              0x20U   /* wraps a UDS (ISO 14229) request as its payload */
 
-#define BL_VENDOR_ID   100U
-#define BL_SW_MAJOR    1U
-#define BL_SW_MINOR    5U
-#define BL_SW_PATCH    0U
-
 /* This FBL's own version, packed the same way as an image header's fw_version.
    A self-update is refused if the incoming FBL is older than this. */
 #define FBL_VERSION_PACKED  (((uint32_t)BL_SW_MAJOR << 16) | ((uint32_t)BL_SW_MINOR << 8) | (uint32_t)BL_SW_PATCH)
@@ -55,13 +53,15 @@ static const uint8_t BL_PUBLIC_KEY[32] = {
 
 /* Pre-shared ChaCha20 key. Firmware confidentiality only; the Ed25519 signature
    (over the staged ciphertext's hash) still provides authenticity + integrity.
-   Must match host/keys/bl_enckey.bin. */
-static const uint8_t BL_ENC_KEY[32] = {
-    0x28, 0xF1, 0x1D, 0xFA, 0xA1, 0x72, 0x28, 0x9C,
-    0x72, 0x1E, 0xF3, 0xF0, 0xD3, 0xB1, 0x98, 0xF6,
-    0x4A, 0xE3, 0xE3, 0x8F, 0xE5, 0x5E, 0x1D, 0x6C,
-    0x2C, 0x4F, 0x8A, 0x4F, 0x74, 0xD4, 0x06, 0xEA
-};
+   It is a secret, so it comes from a git-ignored header (sign_tool.py genenckey writes it
+   next to host/keys/bl_enckey.bin), never from this file. */
+#if defined(BL_ENC_KEY_HEADER)
+#include BL_ENC_KEY_HEADER
+#else
+#warning "Building with the PUBLIC demo image-encryption key: define BL_ENC_KEY_HEADER for anything that is not a demo"
+#include "bl_enckey_demo.h"
+#endif
+static const uint8_t BL_ENC_KEY[32] = BL_ENC_KEY_BYTES;
 #endif
 
 #define BL_RX_MAX      256U
@@ -169,11 +169,53 @@ static int BL_DecryptSlotBtoA(const img_header_t *hdr)
     return 1;
 }
 
+/* ---- application metadata: two pages, newest valid record wins ---------------- */
+#define META_CHECK_SALT 0xA5C35A3CU
+
+static uint32_t Meta_CheckWord(const app_meta_t *m)
+{
+    return m->magic ^ m->size ^ m->crc ^ m->version ^ m->seq ^ META_CHECK_SALT;
+}
+
+static int Meta_IsValid(const app_meta_t *m)
+{
+    if (m->magic != APP_META_MAGIC)         return 0;
+    if (m->version == 0xFFFFFFFFU)          return 0;
+    if (m->seq == 0xFFFFFFFFU)              return 0;
+    return (m->check == Meta_CheckWord(m)) ? 1 : 0;
+}
+
+const app_meta_t *Meta_Current(void)
+{
+    const app_meta_t *a = (const app_meta_t *)CONFIG_ADDR;
+    const app_meta_t *b = (const app_meta_t *)CONFIG_ALT_ADDR;
+    int va = Meta_IsValid(a);
+    int vb = Meta_IsValid(b);
+
+    if (va && vb) return (b->seq > a->seq) ? b : a;
+    if (va)       return a;
+    if (vb)       return b;
+    return (const app_meta_t *)0;
+}
+
+uint32_t Meta_Floor(void)
+{
+    const app_meta_t *m = Meta_Current();
+    return m ? m->version : 0U;
+}
+
+/* The page to rewrite next: whichever one is not the current record. */
+static uint32_t Meta_TargetAddr(void)
+{
+    const app_meta_t *m = Meta_Current();
+    return (m == (const app_meta_t *)CONFIG_ADDR) ? CONFIG_ALT_ADDR : CONFIG_ADDR;
+}
+
 int BootMgr_AppValid(void)
 {
-    const app_meta_t *meta = (const app_meta_t *)CONFIG_ADDR;
+    const app_meta_t *meta = Meta_Current();
 
-    if (meta->magic != APP_META_MAGIC)                 return 0;
+    if (meta == (const app_meta_t *)0)                 return 0;
     if (meta->size == 0U || meta->size > APP_MAX_SIZE) return 0;
     return (BL_CRC_Region(APP_BASE, meta->size) == meta->crc) ? 1 : 0;
 }
@@ -312,17 +354,22 @@ static uint16_t BIST_ReadVdd_mv(int *ok)
 
 int BIST_Run(bist_result_t *out)
 {
-    const app_meta_t *meta = (const app_meta_t *)CONFIG_ADDR;
     int vok = 0;
 
+    int crc_ok = BIST_CrcEngine();
+
     g_bist.ram_ok   = (uint8_t)BIST_RamMarch();
-    g_bist.flash_ok = (uint8_t)(BIST_CrcEngine() &&
-                                (meta->magic != APP_META_MAGIC || BootMgr_AppValid()));
+    /* what the BIST command reports: CRC engine fine, and the app (if any) still matches its CRC */
+    g_bist.flash_ok = (uint8_t)(crc_ok &&
+                                (Meta_Current() == (const app_meta_t *)0 || BootMgr_AppValid()));
     g_bist.vdd_mv   = BIST_ReadVdd_mv(&vok);
     g_bist.vdd_ok   = (uint8_t)(vok && g_bist.vdd_mv >= 2700U && g_bist.vdd_mv <= 3600U);
 
     if (out) *out = g_bist;
-    return (g_bist.ram_ok && g_bist.flash_ok) ? 1 : 0;   /* VDD is advisory */
+    /* Only broken RAM or a broken CRC engine is fatal. A damaged app (an interrupted install,
+       say) is exactly what the bootloader is here to fix, and BootMgr_JumpToApp already
+       refuses to start it. VDD is advisory. */
+    return (g_bist.ram_ok && crc_ok) ? 1 : 0;
 }
 
 /* ---- reply builders (fill bl_reply instead of transmitting) ---- */
@@ -346,17 +393,39 @@ static void BL_Handle_GetVersion(void)
     BL_ReplyData(4U, ver);
 }
 
+/*
+ * ERASE and WRITE only reach the staging slot. Everything else (the app, the FBL, the
+ * metadata, the Boot Manager) changes through VERIFY / UPDATE_FBL, which authenticate the
+ * image first; a raw write there would bypass that. The subtraction form avoids overflow.
+ */
+#define SLOT_B_END  (SLOT_B_BASE + FBL_REGION_SIZE)
+
+static int BL_InStaging(uint32_t addr, uint32_t len)
+{
+    return addr >= SLOT_B_BASE && addr <= SLOT_B_END && len <= (SLOT_B_END - addr);
+}
+
 static void BL_Handle_Erase(void)      /* [addr:4][num_pages:1] */
 {
     uint32_t addr   = BL_ReadU32(&bl_rx[2]);
     uint32_t npages = bl_rx[6];
+    if ((addr % 1024U) != 0U || !BL_InStaging(addr, npages * 1024U)) {
+        BL_ReplyByte(0U);
+        return;
+    }
     BL_ReplyByte(FlashIf_ErasePages(addr, npages) ? 1U : 0U);
 }
 
 static void BL_Handle_Write(void)      /* [addr:4][len:1][data:len] */
 {
-    uint32_t addr = BL_ReadU32(&bl_rx[2]);
-    uint8_t  len  = bl_rx[6];
+    uint32_t addr  = BL_ReadU32(&bl_rx[2]);
+    uint32_t len   = bl_rx[6];
+    /* what the frame really carries: LEN minus cmd, addr, len byte and CRC */
+    uint32_t avail = ((uint32_t)bl_rx[0] >= 10U) ? (uint32_t)bl_rx[0] - 10U : 0U;
+    if ((addr & 1U) != 0U || len > avail || !BL_InStaging(addr, len)) {
+        BL_ReplyByte(0U);
+        return;
+    }
     BL_ReplyByte(FlashIf_Write(addr, &bl_rx[7], len) ? 1U : 0U);
 }
 
@@ -403,9 +472,9 @@ static int BL_CheckImage(const uint8_t *buf, img_header_t *out, uint8_t expected
    Returns 1 on success. */
 static int BL_InstallApp(const uint8_t *hdr_and_sig)
 {
-    const app_meta_t *cur = (const app_meta_t *)CONFIG_ADDR;
-    uint32_t floor = (cur->magic == APP_META_MAGIC && cur->version != 0xFFFFFFFFU)
-                     ? cur->version : 0U;   /* installed version is the rollback floor */
+    const app_meta_t *cur = Meta_Current();
+    uint32_t floor = Meta_Floor();          /* installed version is the rollback floor */
+    uint32_t target = Meta_TargetAddr();    /* the page that is NOT the current record */
     img_header_t hdr;
     uint32_t npages;
     int promoted;
@@ -426,8 +495,12 @@ static int BL_InstallApp(const uint8_t *hdr_and_sig)
     meta.size    = hdr.payload_size;
     meta.crc     = BL_CRC_Region(APP_BASE, hdr.payload_size);
     meta.version = hdr.fw_version;
-    if (FlashIf_ErasePages(CONFIG_ADDR, 1U) &&
-        FlashIf_Write(CONFIG_ADDR, (const unsigned char *)&meta, sizeof(meta))) {
+    meta.seq     = cur ? (cur->seq + 1U) : 1U;
+    meta.check   = Meta_CheckWord(&meta);
+    /* Only the non-current page is touched: the old record, and the floor with it, stays
+       valid until the last word of the new one is programmed. */
+    if (FlashIf_ErasePages(target, 1U) &&
+        FlashIf_Write(target, (const unsigned char *)&meta, sizeof(meta))) {
         BootTrial_Begin();   /* new app is on trial until it confirms itself */
         return 1;
     }
@@ -522,9 +595,10 @@ static void BL_Handle_LockBm(void)
  * over any transport and reuses the framing + crypto we already have. A request
  * is [SID][params]; a positive reply is [SID+0x40][data], a negative reply is
  * [0x7F][SID][NRC]. The flashing flow is the canonical one:
- *   0x10 programming session -> 0x27 seed/key unlock -> 0x34 request download ->
- *   0x36 transfer data (into Slot B) -> 0x37 exit -> 0x31 install routine (runs
- *   our signed verify + promote) -> 0x11 ECU reset.
+ *   0x10 extended session -> 0x10 programming session -> 0x27 seed/key unlock ->
+ *   0x34 request download -> 0x36 transfer data (into Slot B) -> 0x37 exit ->
+ *   0x31 install routine (runs our signed verify + promote) -> 0x11 ECU reset.
+ * Which session may move to which, and what each service needs, is in bl_udspolicy.c.
  */
 #define UDS_POS               0x40U
 #define UDS_NEG               0x7FU
@@ -532,41 +606,54 @@ static void BL_Handle_LockBm(void)
 #define UDS_ECU_RESET         0x11U
 #define UDS_RDBI              0x22U
 #define UDS_SECURITY          0x27U
+#define UDS_READ_MEM          0x23U
+#define UDS_COMM_CTRL         0x28U
 #define UDS_ROUTINE           0x31U
 #define UDS_REQ_DOWNLOAD      0x34U
 #define UDS_TRANSFER_DATA     0x36U
 #define UDS_XFER_EXIT         0x37U
 #define UDS_TESTER_PRESENT    0x3EU
+#define UDS_DTC_SETTING       0x85U
 
 #define NRC_SERVICE_NOT_SUPP  0x11U
 #define NRC_SUBFUNC_NOT_SUPP  0x12U
 #define NRC_INVALID_LENGTH    0x13U
+#define NRC_CONDITIONS        0x22U
 #define NRC_SEQUENCE          0x24U
 #define NRC_OUT_OF_RANGE      0x31U
 #define NRC_SECURITY_DENIED   0x33U
 #define NRC_INVALID_KEY       0x35U
 #define NRC_PROG_FAILURE      0x72U
 
-#define SESSION_DEFAULT       0x01U
-#define SESSION_PROGRAMMING   0x02U
-#define SESSION_EXTENDED      0x03U
+#define SESSION_DEFAULT       BL_SESS_DEFAULT
+#define SESSION_PROGRAMMING   BL_SESS_PROGRAMMING
+#define SESSION_EXTENDED      BL_SESS_EXTENDED
 
-#define UDS_KEY_SECRET        0x5A3C96E1U
 #define UDS_MAX_BLOCK         128U       /* max TransferData payload */
 
 static uint8_t  uds_session = SESSION_DEFAULT;
+static uint32_t uds_last_ms;            /* when the last request came in, for the S3 timeout */
 static uint8_t  uds_unlocked;
-static uint32_t uds_seed;
+static uint8_t  uds_seed[4];            /* seed handed out, awaiting its key */
+static uint8_t  uds_seed_valid;         /* a seed is good for exactly one sendKey */
+static bl_sec_t uds_sec;                /* SecurityAccess brute-force policy */
 static uint32_t uds_dl_addr;
 static uint32_t uds_dl_remaining;
 static uint8_t  uds_bsc;                 /* expected block sequence counter */
 static uint8_t  bl_uds_reset_pending;
 
-/* Demo seed->key transform. A real ECU keeps this secret; both ends share it. */
-static uint32_t uds_key_from_seed(uint32_t seed)
+/* Finer than the ms tick; only used to make seeds differ between power-ups. */
+static uint32_t uds_cycles(void)
 {
-    uint32_t k = (seed << 3) | (seed >> 29);   /* rotate left 3 */
-    return k ^ UDS_KEY_SECRET;
+    return DWT->CYCCNT;
+}
+
+void BL_SecurityInit(void)
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    BL_SecInit(&uds_sec, HAL_GetTick());
 }
 
 static uint32_t uds_nrc(uint8_t *resp, uint8_t sid, uint8_t nrc)
@@ -575,7 +662,7 @@ static uint32_t uds_nrc(uint8_t *resp, uint8_t sid, uint8_t nrc)
     return 3U;
 }
 
-static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
+static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
 {
     uint8_t sid;
     if (len < 1U) return 0U;
@@ -589,11 +676,17 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
         return 2U;
 
     case UDS_SESSION: {
-        uint8_t sub = (len >= 2U) ? (req[1] & 0x7FU) : 0U;
-        if (sub != SESSION_DEFAULT && sub != SESSION_PROGRAMMING && sub != SESSION_EXTENDED)
+        uint8_t sub;
+        if (len < 2U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        sub = req[1] & 0x7FU;
+        if (!BL_UdsSessionKnown(sub))
             return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
+        if (!BL_UdsSessionChangeAllowed(uds_session, sub))
+            return uds_nrc(resp, sid, NRC_CONDITIONS);
         uds_session  = sub;
         uds_unlocked = 0U;                 /* a session change always re-locks */
+        uds_seed_valid = 0U;
+        uds_dl_addr = 0U; uds_dl_remaining = 0U;   /* and drops a download in progress */
         resp[0] = sid + UDS_POS; resp[1] = sub;
         resp[2] = 0x00; resp[3] = 0x32;    /* P2 = 50 ms    */
         resp[4] = 0x01; resp[5] = 0xF4;    /* P2* = 5000 ms */
@@ -602,26 +695,47 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
 
     case UDS_SECURITY: {
         uint8_t sub = (len >= 2U) ? req[1] : 0U;
+        uint8_t gate;
+
+        if (sub != 0x01U && sub != 0x02U)
+            return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
+
+        /* boot delay (0x37) and the wrong-key wait or lockout (0x36) cover both steps */
+        gate = BL_SecGate(&uds_sec, HAL_GetTick());
+        if (gate != 0U)
+            return uds_nrc(resp, sid, gate);
+
         if (sub == 0x01U) {                /* requestSeed */
-            uds_seed = uds_unlocked ? 0U : ((HAL_GetTick() * 2654435761U) | 1U);
             resp[0] = sid + UDS_POS; resp[1] = sub;
-            resp[2] = (uint8_t)(uds_seed >> 24); resp[3] = (uint8_t)(uds_seed >> 16);
-            resp[4] = (uint8_t)(uds_seed >> 8);  resp[5] = (uint8_t)uds_seed;
+            if (uds_unlocked) {            /* already unlocked: an all-zero seed says so */
+                resp[2] = resp[3] = resp[4] = resp[5] = 0U;
+                uds_seed_valid = 0U;
+            } else {
+                BL_Sec_MakeSeed(uds_seed, BL_SecNextCounter(&uds_sec), HAL_GetTick(), uds_cycles());
+                uds_seed_valid = 1U;
+                resp[2] = uds_seed[0]; resp[3] = uds_seed[1];
+                resp[4] = uds_seed[2]; resp[5] = uds_seed[3];
+            }
             return 6U;
         }
-        if (sub == 0x02U) {                /* sendKey */
-            uint32_t key;
-            if (len < 6U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
-            key = ((uint32_t)req[2] << 24) | ((uint32_t)req[3] << 16)
-                | ((uint32_t)req[4] << 8) | req[5];
-            if (uds_seed != 0U && key == uds_key_from_seed(uds_seed)) {
-                uds_unlocked = 1U; uds_seed = 0U;
+
+        /* sendKey */
+        {
+            uint8_t expect[4];
+            int ok;
+            if (len != 6U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+            BL_Sec_KeyForSeed(uds_seed, expect);
+            ok = uds_seed_valid && BL_Sec_Equal(&req[2], expect, 4U);
+            uds_seed_valid = 0U;           /* one attempt per seed */
+            if (ok) {
+                uds_unlocked = 1U;
+                BL_SecNoteSuccess(&uds_sec);
                 resp[0] = sid + UDS_POS; resp[1] = sub;
                 return 2U;
             }
+            BL_SecNoteFail(&uds_sec, HAL_GetTick());
             return uds_nrc(resp, sid, NRC_INVALID_KEY);
         }
-        return uds_nrc(resp, sid, NRC_SUBFUNC_NOT_SUPP);
     }
 
     case UDS_RDBI: {
@@ -636,8 +750,7 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
         case 0xF186U:   /* active diagnostic session */
             resp[3] = uds_session; return 4U;
         case 0xF190U: { /* installed app version */
-            const app_meta_t *m = (const app_meta_t *)CONFIG_ADDR;
-            uint32_t v = (m->magic == APP_META_MAGIC) ? m->version : 0U;
+            uint32_t v = Meta_Floor();
             resp[3] = (uint8_t)(v >> 16); resp[4] = (uint8_t)(v >> 8); resp[5] = (uint8_t)v;
             return 6U;
         }
@@ -649,6 +762,31 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
             return uds_nrc(resp, sid, NRC_OUT_OF_RANGE);
         }
     }
+
+    case UDS_READ_MEM: {
+        /* [ALFID=0x44][addr:4][size:4]: read back from the staging slot so a client can check a download */
+        uint32_t addr, size;
+        if (len < 10U || req[1] != 0x44U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        addr = ((uint32_t)req[2] << 24) | ((uint32_t)req[3] << 16) | ((uint32_t)req[4] << 8) | req[5];
+        size = ((uint32_t)req[6] << 24) | ((uint32_t)req[7] << 16) | ((uint32_t)req[8] << 8) | req[9];
+        if (size == 0U || size > BL_UDS_READ_MAX || !BL_InStaging(addr, size))
+            return uds_nrc(resp, sid, NRC_OUT_OF_RANGE);
+        resp[0] = sid + UDS_POS;
+        memcpy(&resp[1], (const void *)addr, size);
+        return 1U + size;
+    }
+
+    /* The bootloader has no DTCs and no application traffic to silence, so these are accepted
+       as they stand: a standard flash sequence asks for them before the download. */
+    case UDS_COMM_CTRL:
+        if (len < 3U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        resp[0] = sid + UDS_POS; resp[1] = req[1] & 0x7FU;
+        return 2U;
+
+    case UDS_DTC_SETTING:
+        if (len < 2U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
+        resp[0] = sid + UDS_POS; resp[1] = req[1] & 0x7FU;
+        return 2U;
 
     case UDS_REQ_DOWNLOAD: {
         /* [DFI][ALFID][addr:4][size:4]; we require ALFID = 0x44 */
@@ -730,10 +868,38 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
     }
 }
 
+/* Every request goes through the same gate first: the service has to exist, accept this
+   addressing, work in the active session and have enough security. Requests here arrive
+   inside a framed command, so the addressing is always physical. */
+static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
+{
+    uint8_t gate;
+    uint32_t n;
+
+    if (len < 1U) return 0U;
+    uds_last_ms = HAL_GetTick();
+    gate = BL_UdsGate(req[0], uds_session, uds_unlocked ? 1U : 0U, BL_ADDR_PHYSICAL);
+    n = gate ? uds_nrc(resp, req[0], gate) : uds_dispatch(req, len, resp);
+    uds_last_ms = HAL_GetTick();           /* a verify takes seconds and must not count towards S3 */
+    return n;
+}
+
+/* S3: a tester that goes quiet in a non-default session is dropped back to default, locked. */
+static void uds_s3_poll(void)
+{
+    if (uds_session != SESSION_DEFAULT && (HAL_GetTick() - uds_last_ms) > BL_SESSION_TIMEOUT_MS)
+    {
+        uds_session = SESSION_DEFAULT;
+        uds_unlocked = 0U;
+        uds_seed_valid = 0U;
+        uds_dl_addr = 0U; uds_dl_remaining = 0U;
+    }
+}
+
 static void BL_Handle_Uds(void)
 {
     /* frame = [LEN][CMD_UDS][UDS PDU][CRC32]; the PDU length is LEN - 1 - 4 */
-    uint8_t  udsresp[16 + IMG_HDR_SIZE];
+    uint8_t  udsresp[1U + BL_UDS_READ_MAX + 16U];
     uint32_t rlen = UDS_Handle(&bl_rx[2], (uint32_t)bl_rx[0] - 5U, udsresp);
     if (rlen == 0U || rlen > 200U) { BL_ReplyNACK(); return; }
     BL_ReplyData((uint8_t)rlen, udsresp);
@@ -952,6 +1118,7 @@ done:
 /* ---- transport loop: USART2, USART1, CAN, SPI2, and I2C1 (all at once) ---- */
 void BL_Run(void)
 {
+    BL_SecurityInit();   /* SecurityAccess policy clock + cycle counter */
     CAN_BL_Init();   /* real CAN bus (CAN_BL_LOOPBACK = 0) + accept-all filter + start */
     SPI2_SlaveInit();/* SPI slave transport for the Blue Pill bridge */
     I2C1_SlaveInit();/* I2C slave transport for the Blue Pill bridge */
@@ -970,6 +1137,7 @@ void BL_Run(void)
            wait indefinitely for a new upload) doesn't reset every ~2 s. Writing
            the refresh key is a no-op when the IWDG was never started. */
         IWDG->KR = 0xAAAAU;
+        uds_s3_poll();
 
         /* Drop a stale overrun so the next frame re-syncs from its start byte. */
         if (__HAL_UART_GET_FLAG(BL_HOST_UART, UART_FLAG_ORE)) __HAL_UART_CLEAR_OREFLAG(BL_HOST_UART);

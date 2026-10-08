@@ -31,6 +31,8 @@ void BL_UDS_Poll(void);
  *   1 = no response at all (transport / server stalled)
  *   2 = DiagnosticSessionControl not accepted
  *   3 = SecurityAccess seed not granted
+ *  20 = SecurityAccess was not refused in the default session
+ *  21 = default -> programming was not refused
  *   4 = SecurityAccess key rejected (not unlocked)
  *   5 = erase routine (0x31) rejected
  *   6 = RequestDownload (0x34) rejected
@@ -38,6 +40,8 @@ void BL_UDS_Poll(void);
  *   8 = RequestTransferExit (0x37) rejected
  *   9 = ReadMemoryByAddress (0x23) read-back did not match what was written
  *  10 = RoutineControl CheckMemory (0x31 / 0xFF01) rejected or CRC mismatch
+ *  30 = one of the shared requests (tests/vectors/uds_common.txt) was answered differently
+ *       from the production command layer; bl_uds_vec_fail holds its 1-based number
  */
 int BL_UDS_SelfTest(void);
 

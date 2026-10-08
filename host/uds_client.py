@@ -15,11 +15,11 @@ Usage:
 The bridge relays each request straight onto CAN (0x7E0) and returns the raw
 ISO-TP reply, so this script speaks UDS directly - no CRC, no framing wrapper.
 """
+import seckey
 import sys
 import time
 import serial   # pip install pyserial
 
-SECRET = bytes([0x19, 0x84, 0xC0, 0xDE])   # must match bl_uds.c
 SLOT_B = 0x08015000                        # A/B staging slot base
 PAYLOAD = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44])
 
@@ -81,9 +81,11 @@ def main():
     s = open_raw(sys.argv[1])
     print("=== PC UDS client -> Blue Pill (raw CAN) -> Nucleo iso14229 server ===")
 
-    # 1) DiagnosticSessionControl -> programming session
-    r = xfer(s, "[1] DiagnosticSessionControl (programming)", bytes([0x10, 0x02]))
-    need(r[:2] == bytes([0x50, 0x02]), "session control not accepted")
+    # 1) DiagnosticSessionControl -> extended, then programming (it can not be entered directly)
+    r = xfer(s, "[1a] DiagnosticSessionControl (extended)", bytes([0x10, 0x03]))
+    need(r[:2] == bytes([0x50, 0x03]), "extended session not accepted")
+    r = xfer(s, "[1b] DiagnosticSessionControl (programming)", bytes([0x10, 0x02]))
+    need(r[:2] == bytes([0x50, 0x02]), "programming session not accepted")
 
     print("    waiting out the ~1 s security boot delay...")
     time.sleep(1.3)
@@ -92,7 +94,7 @@ def main():
     r = xfer(s, "[2] SecurityAccess requestSeed", bytes([0x27, 0x01]))
     need(len(r) >= 6 and r[:2] == bytes([0x67, 0x01]), "seed not granted")
     seed = r[2:6]
-    key = bytes(a ^ b for a, b in zip(seed, SECRET))
+    key = seckey.key_for_seed(seed)
     print("    seed from server:", seed.hex(" "), " computed key:", key.hex(" "))
 
     # 3) SecurityAccess sendKey

@@ -1,9 +1,14 @@
-# Runs on every push. Two jobs:
+# Runs on every push. The jobs:
 #   firmware     - compiles all four firmware projects with arm-none-eabi-gcc
 #                  (HAL/CMSIS are committed, so a clean clone builds) and keeps
 #                  the .bin files as a build artifact.
+#   static-analysis - a strict build, clang-tidy and cppcheck on the hand-written sources.
 #   emulator     - boots the real Boot Manager + FBL in Renode and drives them
 #                  with the real host tool (signed install, anti-rollback, tamper).
+#   powercut     - cuts power at each kind of flash operation during an FBL self-update
+#                  and an app install, and checks the device recovers and the
+#                  rollback floor holds.
+#   esp32        - builds the ESP32 Wi-Fi / BLE gateway with PlatformIO.
 #   diagnostics  - off-target checks: ODX validation, the UDS conformance
 #                  suite (against the host model) and one run over a virtual
 #                  CAN bus.
@@ -24,10 +29,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_ALLOW_DEMO_KEY=ON
 
       - name: Build
         run: cmake --build build
+
+      - name: Flash headroom (release builds)
+        run: |
+          bash scripts/size_check.sh build/boot_manager.elf 16384
+          bash scripts/size_check.sh build/fbl.elf 40960
+          bash scripts/size_check.sh build/application.elf 28672
+
+      - name: Flash headroom (Debug FBL, the tightest case)
+        run: |
+          cmake -S . -B build-debug -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug -DBL_ALLOW_DEMO_KEY=ON
+          cmake --build build-debug --target fbl.elf
+          bash scripts/size_check.sh build-debug/fbl.elf 40960
 
       - name: Upload firmware binaries
         uses: actions/upload-artifact@v4
@@ -35,8 +52,71 @@ jobs:
           name: firmware-bins
           path: build/*.bin
 
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build clang-tidy cppcheck
+
+      - name: Strict build (extra warnings as errors, GCC static analyzer)
+        run: |
+          cmake -S . -B build-strict -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_STRICT=ON -DBL_TEST_KEYS=ON
+          cmake --build build-strict
+
+      - name: clang-tidy and cppcheck
+        run: bash scripts/lint.sh
+
   emulator:
     runs-on: ubuntu-latest
+    env:
+      RENODE_VERSION: "1.17.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi cmake ninja-build
+
+      - name: Cache Renode
+        id: renode-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/renode
+          key: renode-${{ env.RENODE_VERSION }}-linux
+
+      - name: Install Renode
+        if: steps.renode-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/renode
+          curl -sL https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz             | tar xz -C ~/renode --strip-components=1
+
+      - name: Build firmware with the published TEST keys
+        run: |
+          cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+          cmake --build build-test
+          # the iso14229 server boots into its own self-test in this variant
+          cmake -S . -B build-udsself -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+          cmake --build build-udsself
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pynacl pyserial
+
+      - name: Run the real firmware in Renode
+        env:
+          RENODE_PATH: ${{ github.workspace }}/../../../renode/renode
+        run: |
+          export RENODE_PATH="$HOME/renode/renode"
+          python -m pytest tests/renode -v -m "not powercut"
+
+  powercut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       RENODE_VERSION: "1.17.0"
     steps:
@@ -71,12 +151,12 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest pynacl pyserial
 
-      - name: Run the real firmware in Renode
+      - name: Pull the plug at every kind of flash operation
         env:
           RENODE_PATH: ${{ github.workspace }}/../../../renode/renode
         run: |
           export RENODE_PATH="$HOME/renode/renode"
-          python -m pytest tests/renode -v
+          python -m pytest tests/renode -v -m powercut
 
   diagnostics:
     runs-on: ubuntu-latest
@@ -113,3 +193,25 @@ jobs:
         with:
           name: uds-conformance-report
           path: tests/report.html
+
+  esp32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('ESP32_OTA_Gateway/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build the gateway
+        run: pio run -d ESP32_OTA_Gateway
