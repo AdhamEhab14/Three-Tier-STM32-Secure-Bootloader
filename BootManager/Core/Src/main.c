@@ -150,6 +150,16 @@ int main(void)
   MX_GPIO_Init();
   MX_CRC_Init();
   /* USER CODE BEGIN 2 */
+  /* An app that started the independent watchdog leaves it running across resets with its
+     own short timeout (the demo app uses ~2 s), and re-copying the FBL here, or a signature
+     check in the FBL, can take longer than that. Stretch it to the maximum (~26 s): still a
+     guard against a hang, no longer a reset in the middle of a repair. The settings carry
+     over into the FBL and the SBL. Harmless when the watchdog was never started. */
+  IWDG->KR  = 0x5555U;   /* unlock PR and RLR                 */
+  IWDG->PR  = 0x06U;     /* prescaler /256                    */
+  IWDG->RLR = 0x0FFFU;   /* 4095 ticks at ~156 Hz -> ~26 s    */
+  IWDG->KR  = 0xAAAAU;   /* reload with the new values        */
+
   /* Boot Manager: verify the FBL, then hand control to it. */
   const bm_state_t *st = (const bm_state_t *)BM_STATE_ADDR;
   uint32_t fbl_sp = *(volatile uint32_t *)FBL_BASE;
