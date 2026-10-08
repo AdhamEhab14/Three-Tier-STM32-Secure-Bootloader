@@ -80,7 +80,7 @@ Repeat step 2 (a plain `flash`) once per link and note the time.
 
 | Link | Command | Notes |
 |---|---|---|
-| CAN | `bl_host.py can:COMx flash app.bin` | 250 kbit/s, 120 ohm termination at both ends |
+| CAN | `bl_host.py can:COMx flash app.bin` | 250 kbit/s, 120 ohm termination at both ends; frames are received by interrupt now, so also run `updatefbl` over CAN once |
 | SPI | `bl_host.py spi:COMx flash app.bin` | DATA_READY wired to PB1 |
 | I2C | `bl_host.py i2c:COMx flash app.bin` | address `0x42`, pull-ups present |
 | Wi-Fi | `bl_host.py tcp:192.168.4.1:3333 flash app.bin` | join the ESP32 access point first |
@@ -117,6 +117,16 @@ once. Do each twice.
    `GET_VER` shows the new version.
 2. `lockbm`. Expect: reset, the board still boots. Check WRP in CubeProgrammer shows the
    Boot Manager pages protected. Clear it again with the steps in the README when finished.
+3. Only on a board you are ready to mass-erase: `lockrdp`. Expect: reset (power-cycle if the
+   ST-Link is attached), the board still boots, CubeProgrammer shows RDP level 1 and the WRP
+   still set, and a flash read with the ST-Link is refused. Then run `updatefbl` once more:
+   the self-update must still work with RDP on (if the RAM routine is refused flash access,
+   the Boot Manager finishes the copy from Slot B, so the board should still come up with
+   the new FBL; note which happened). Undo with CubeProgrammer: RDP back to AA, which
+   mass-erases, then reflash everything.
+4. Recovery with the watchdog running: with the demo app installed (it starts the watchdog),
+   hold B1 at reset and run `flash` with a new signed app. Expect: the install finishes; the
+   board must not reset in the middle of the signature check.
 
 ## What to write down
 

@@ -137,7 +137,8 @@ What it does *not* fully cover on this particular MCU:
 
 Hardening if the threat model included physical attackers:
 
-- Enable **RDP level 1** alongside WRP so any unlock triggers a mass erase (tamper-evident).
+- Enable **RDP level 1** alongside WRP so any unlock triggers a mass erase (tamper-evident):
+  `bl_host.py COMx lockrdp` does it and keeps the WRP.
 - Move to a part with **RDP level 2 / hardware secure boot** (STM32 H5, L5, U5) to close the
   debug read-out path.
 - Keep the symmetric key **off-chip** — provisioned per-device from a secure element —
@@ -280,6 +281,17 @@ python bl_host.py COMx lockbm
 
 This write-protects the Boot Manager's pages. To change it later, re-check WRP0–3 in
 STM32CubeProgrammer — that clears the lock without erasing your firmware.
+
+For a board that leaves your desk, also turn on read protection level 1:
+
+```
+python bl_host.py COMx lockrdp
+```
+
+No flash read-out over SWD/JTAG after that, and going back to level 0 mass-erases the chip,
+so the keys go with it. The Boot Manager's write protection is kept. Both lock commands
+first unlock (programming session and SecurityAccess) on their own, and the board refuses
+them without it.
 
 ## Diagnostics & validation
 
