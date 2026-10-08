@@ -11,13 +11,28 @@
 
 #define FLASH_PAGE   1024U
 
+/* Each erase and each write is read back. The controller's status flags only say the
+   operation ran; a page left half-erased or a weakly programmed cell (a brown-out during
+   the operation, worn flash) shows up here instead of later as a CRC or signature failure. */
+static int page_is_erased(uint32_t page)
+{
+    const volatile uint32_t *p = (const volatile uint32_t *)page;
+    for (uint32_t i = 0U; i < FLASH_PAGE / 4U; i++) {
+        if (p[i] != 0xFFFFFFFFU) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int FlashIf_ErasePages(unsigned long start_addr, unsigned long num_pages)
 {
     if (FLASH_Unlock() != HAL_OK) {
         return 0;
     }
     for (unsigned long i = 0U; i < num_pages; i++) {
-        if (FLASH_ErasePage((uint32_t)(start_addr + i * FLASH_PAGE)) != HAL_OK) {
+        uint32_t page = (uint32_t)(start_addr + i * FLASH_PAGE);
+        if (FLASH_ErasePage(page) != HAL_OK || !page_is_erased(page)) {
             FLASH_Lock();
             return 0;
         }
@@ -38,7 +53,8 @@ int FlashIf_Write(unsigned long addr, const unsigned char *data, unsigned long l
         } else {
             hw |= 0xFF00U;                                  /* pad odd last byte */
         }
-        if (FLASH_ProgramHalfWord((uint32_t)(addr + i), hw) != HAL_OK) {
+        if (FLASH_ProgramHalfWord((uint32_t)(addr + i), hw) != HAL_OK ||
+            *(const volatile uint16_t *)(addr + i) != hw) {
             FLASH_Lock();
             return 0;
         }
