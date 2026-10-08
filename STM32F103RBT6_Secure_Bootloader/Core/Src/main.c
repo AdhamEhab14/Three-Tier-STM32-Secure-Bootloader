@@ -114,6 +114,17 @@ static void bl_selftest_report(int code)
 #endif
 
 /* Boot Manager -> Application handoff (Slot A) */
+/* Mask and clear every peripheral interrupt. The CAN receive interrupt is on while the FBL
+   runs; after the jump its vector would belong to the app, and under the SBL to nothing. */
+static void BootMgr_QuietInterrupts(void)
+{
+    for (uint32_t i = 0U; i < 8U; i++) {
+        NVIC->ICER[i] = 0xFFFFFFFFU;
+        NVIC->ICPR[i] = 0xFFFFFFFFU;
+    }
+    __DSB(); __ISB();
+}
+
 void BootMgr_JumpToApp(void)
 {
     /* Only launch a verified application (metadata magic + whole-image CRC) */
@@ -122,6 +133,7 @@ void BootMgr_JumpToApp(void)
         return;   /* no valid application -> stay in the bootloader */
     }
 
+    BootMgr_QuietInterrupts();
     HAL_RCC_DeInit();
     HAL_DeInit();
     /* Stop the SysTick Timer so it doesn't fire interrupts during the jump */
@@ -143,11 +155,12 @@ void BootMgr_RunSBL(void)
     uint32_t *dst = &_sbl_ram_start;
     while (dst < &_sbl_ram_end) { *dst++ = *src++; }   /* stage image into RAM */
 
+    BootMgr_QuietInterrupts();               /* the SBL's table has no peripheral handlers */
     SysTick->CTRL = 0;                       /* stop SysTick (no handler in SBL table) */
     __DSB(); __ISB();
-    SCB->VTOR = 0x20001000U;                 /* vector table now in RAM */
-    __set_MSP(*(volatile uint32_t *)0x20001000U);
-    ((pFunction)(*(volatile uint32_t *)0x20001004U))();  /* jump into RAM */
+    SCB->VTOR = (uint32_t)&_sbl_ram_start;   /* vector table now in RAM */
+    __set_MSP(_sbl_ram_start);                /* [0] initial stack pointer */
+    ((pFunction)(*(&_sbl_ram_start + 1)))();  /* [1] reset vector: jump into RAM */
 }
 
 /* USER CODE END 0 */
