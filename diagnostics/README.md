@@ -39,6 +39,9 @@ byte layouts, the seed/key relation, and the NRC value table — for physical ad
 | ECUReset | `0x11` | `ECUReset` | `UDS_EVT_EcuReset` |
 | CommunicationControl | `0x28` | `CommunicationControl` | `UDS_EVT_CommCtrl` |
 | ControlDTCSetting | `0x85` | `ControlDTCSetting` | `UDS_EVT_ControlDTCSetting` |
+| ReadDataByIdentifier, active session | `0x22 F186` | `ReadDataByIdentifier_ActiveSession` | `UDS_EVT_ReadDataByIdent` |
+| ReadDataByIdentifier, bootloader version | `0x22 F195` | `ReadDataByIdentifier_BootloaderVersion` | `UDS_EVT_ReadDataByIdent` |
+| TesterPresent | `0x3E` | `TesterPresent` | handled by the library |
 
 Not described here (not part of the standards stack): `0x22 ReadDataByIdentifier` lives only
 in the hand-rolled command layer, not in `bl_uds.c`.

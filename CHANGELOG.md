@@ -68,6 +68,9 @@ All notable changes to this project are recorded here. The format follows
   sequence does.
   Found by replaying one shared request list against both servers (below).
 
+- The ODX description gains ReadDataByIdentifier (F186 active session, F195 bootloader
+  version) and TesterPresent; the service tables in the docs list them too.
+
 ### Tests
 - `tests/vectors/uds_common.txt` is a list of requests with the start of the expected answer.
   The production command layer replays it in the emulator (`test_uds_common.py`) and the

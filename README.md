@@ -232,6 +232,10 @@ Every command works over any link — only the port argument changes:
 | Wi-Fi | `tcp:192.168.4.1:3333` | ESP32 gateway → UART |
 | BLE | `ble:STM32-OTA-BLE` | ESP32 gateway → UART |
 
+The gateway's Wi-Fi password is a published default until you copy
+`ESP32_OTA_Gateway/src/gateway_secrets.example.h` to `gateway_secrets.h` (git-ignored) and set
+your own; the build warns while it uses the default.
+
 SPI and I2C use a spare `DATA_READY` line so a slow command (signature verification takes a
 couple of seconds) doesn't have to hold the bus while the board thinks.
 

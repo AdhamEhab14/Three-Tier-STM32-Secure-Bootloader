@@ -212,6 +212,33 @@
             <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
           </DIAG-SERVICE>
 
+          <DIAG-SERVICE ID="DS_RDBI_SESSION" SEMANTIC="IDENTIFICATION">
+            <SHORT-NAME>ReadDataByIdentifier_ActiveSession</SHORT-NAME>
+            <LONG-NAME>ReadDataByIdentifier active session (0x22 F186)</LONG-NAME>
+            <DESC><![CDATA[The active diagnostic session as one byte. Every session, both addressings. Both servers.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RDBI_SESSION"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RDBI_SESSION"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_RDBI_VERSION" SEMANTIC="IDENTIFICATION">
+            <SHORT-NAME>ReadDataByIdentifier_BootloaderVersion</SHORT-NAME>
+            <LONG-NAME>ReadDataByIdentifier bootloader version (0x22 F195)</LONG-NAME>
+            <DESC><![CDATA[Vendor id, major, minor, patch (the GET_VER bytes). Both servers. The production command layer also answers F190 (installed app version) and FD00 (last self-test).]]></DESC>
+            <REQUEST-REF ID-REF="REQ_RDBI_VERSION"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_RDBI_VERSION"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
+          <DIAG-SERVICE ID="DS_TP" SEMANTIC="TESTING">
+            <SHORT-NAME>TesterPresent</SHORT-NAME>
+            <LONG-NAME>TesterPresent (0x3E)</LONG-NAME>
+            <DESC><![CDATA[Keeps a non-default session alive (S3 is 5 s). Every session, also functionally on 0x7DF.]]></DESC>
+            <REQUEST-REF ID-REF="REQ_TP"/>
+            <POS-RESPONSE-REFS><POS-RESPONSE-REF ID-REF="PR_TP"/></POS-RESPONSE-REFS>
+            <NEG-RESPONSE-REFS><NEG-RESPONSE-REF ID-REF="NR_GLOBAL"/></NEG-RESPONSE-REFS>
+          </DIAG-SERVICE>
+
         </DIAG-COMMS>
 
         <!-- ============================ REQUESTS ============================ -->
@@ -415,6 +442,47 @@
             </PARAMS>
           </REQUEST>
 
+          <REQUEST ID="REQ_RDBI_SESSION">
+            <SHORT-NAME>RQ_ReadDataByIdentifier_ActiveSession</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>34</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>dataIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>61830</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_RDBI_VERSION">
+            <SHORT-NAME>RQ_ReadDataByIdentifier_BootloaderVersion</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>34</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>dataIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>61845</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
+          <REQUEST ID="REQ_TP">
+            <SHORT-NAME>RQ_TesterPresent</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SID</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>62</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>subFunction</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </REQUEST>
+
         </REQUESTS>
 
         <!-- ============================ POSITIVE RESPONSES ============================ -->
@@ -594,6 +662,53 @@
               </PARAM>
               <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
                 <SHORT-NAME>dtcSettingType</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RDBI_SESSION">
+            <SHORT-NAME>PR_ReadDataByIdentifier_ActiveSession</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>98</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>dataIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>61830</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>activeSession</SHORT-NAME><BYTE-POSITION>3</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_RDBI_VERSION">
+            <SHORT-NAME>PR_ReadDataByIdentifier_BootloaderVersion</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>98</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>dataIdentifier</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><CODED-VALUE>61845</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>16</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="DATA" xsi:type="VALUE">
+                <SHORT-NAME>bootloaderVersion</SHORT-NAME><BYTE-POSITION>3</BYTE-POSITION><DOP-REF ID-REF="DOP_U32"/>
+              </PARAM>
+            </PARAMS>
+          </POS-RESPONSE>
+
+          <POS-RESPONSE ID="PR_TP">
+            <SHORT-NAME>PR_TesterPresent</SHORT-NAME>
+            <PARAMS>
+              <PARAM SEMANTIC="SERVICE-ID" xsi:type="CODED-CONST">
+                <SHORT-NAME>SIDPR</SHORT-NAME><BYTE-POSITION>0</BYTE-POSITION><CODED-VALUE>126</CODED-VALUE>
+                <DIAG-CODED-TYPE xsi:type="STANDARD-LENGTH-TYPE" BASE-DATA-TYPE="A_UINT32" BASE-TYPE-ENCODING="NONE"><BIT-LENGTH>8</BIT-LENGTH></DIAG-CODED-TYPE>
+              </PARAM>
+              <PARAM SEMANTIC="SUBFUNCTION" xsi:type="VALUE">
+                <SHORT-NAME>subFunction</SHORT-NAME><BYTE-POSITION>1</BYTE-POSITION><DOP-REF ID-REF="DOP_U8"/>
               </PARAM>
             </PARAMS>
           </POS-RESPONSE>
