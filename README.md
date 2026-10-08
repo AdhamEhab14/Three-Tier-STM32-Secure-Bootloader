@@ -173,7 +173,7 @@ golden image (listed under future work).
 To build from the command line you need `arm-none-eabi-gcc`, CMake and Ninja:
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \n      -DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h -DBL_ENC_KEY_HEADER=host/keys/bl_enckey.h
+cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" "-DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h" "-DBL_ENC_KEY_HEADER=host/keys/bl_enckey.h"
 cmake --build build        # boot_manager / fbl / application / bluepill_bridge .elf and .bin
 ```
 

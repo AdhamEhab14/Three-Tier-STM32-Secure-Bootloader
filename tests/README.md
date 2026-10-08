@@ -54,9 +54,9 @@ python uds_bus_sim.py
 them with the real host tool, no board needed. Build with the published test keys first:
 
 ```
-cmake -S . -B build-test -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON
+cmake -S . -B build-test -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON
 cmake --build build-test
-cmake -S . -B build-udsself -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+cmake -S . -B build-udsself -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
 cmake --build build-udsself
 cd tests/renode
 python -m pytest -m "not powercut"     # install, security, sessions, raw commands, both UDS servers (about 20 min)

@@ -12,9 +12,16 @@ two MCP2551 transceivers (or a second node), and the ESP32 gateway.
 ## 0. Build
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \n      -DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h -DBL_ENC_KEY_HEADER=host/keys/bl_enckey.h
+cmake -S . -B build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" "-DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h" "-DBL_ENC_KEY_HEADER=host/keys/bl_enckey.h"
 cmake --build build
 ```
+
+The `-D` arguments are quoted so the line also works in PowerShell, which otherwise splits them
+at the dot.
+
+**If you rotated the image-encryption key** (see CHANGELOG), the board keeps the old one until the
+FBL from this build is flashed in step 1. Delete any `.enc` image made with the old key and
+re-sign it from the plain `.bin` with `enc`.
 
 If you build in CubeIDE instead, refresh the projects first (new source files), and use the
 Debug configuration only for stepping through code: it is `-Og` now.
