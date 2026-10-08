@@ -670,6 +670,10 @@ static void BL_Handle_LockRdp(void)
         BL_ReplyByte(0U);
         return;
     }
+    if ((FLASH->OBR & FLASH_OBR_RDPRT) != 0U) {
+        BL_ReplyByte(1U);            /* already read-protected: nothing to rewrite */
+        return;
+    }
     HAL_FLASH_Unlock();
     HAL_FLASH_OB_Unlock();
 
@@ -680,11 +684,17 @@ static void BL_Handle_LockRdp(void)
         ok = ob_wait();
         FLASH->CR &= ~FLASH_CR_OPTER;
     }
-    ok = ok && ob_write(&OB->RDP, 0x00U);                          /* anything but 0xA5 = level 1 */
-    ok = ok && ob_write(&OB->USER, user);
+    /* Once the block is erased every byte has to go back, so a failed write is retried
+       rather than abandoned: stopping half way would leave the next reset without the
+       Boot Manager's write protection. The WRP bytes go first for the same reason. */
     for (uint32_t i = 0U; i < 4U; i++) {
-        ok = ok && ob_write(wrp[i], (uint8_t)(wrpr >> (8U * i)));
+        uint8_t v = (uint8_t)(wrpr >> (8U * i));
+        int done = 0;
+        for (uint32_t tries = 0U; ok && !done && tries < 3U; tries++) done = ob_write(wrp[i], v);
+        ok = ok && done;
     }
+    ok = ok && (ob_write(&OB->USER, user) || ob_write(&OB->USER, user));
+    ok = ok && (ob_write(&OB->RDP, 0x00U) || ob_write(&OB->RDP, 0x00U));   /* anything but 0xA5 = level 1 */
 
     if (ok) {
         BL_ReplyByte(1U);
