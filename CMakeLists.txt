@@ -9,11 +9,13 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(BL_SEC_KEY_HEADER "" CACHE FILEPATH "Header defining BL_SEC_KEY_BYTES: the SecurityAccess key to build in (default: the public demo key)")
 option(BL_TEST_KEYS "Build the FBL with the published TEST keys (emulator/CI only, never a release)" OFF)
+option(BL_ALLOW_DEMO_KEY "Let the FBL build with the PUBLIC demo SecurityAccess key when no BL_SEC_KEY_HEADER is given" OFF)
 
 # The FBL must fit in 40 KB, so size is the default optimisation goal.
 set(CMAKE_C_FLAGS_MINSIZEREL "-Os -g3")
 set(CMAKE_C_FLAGS_RELEASE    "-O2 -g3")
-set(CMAKE_C_FLAGS_DEBUG      "-O0 -g3")
+# -Og, not -O0: at -O0 the FBL no longer fits its 40 KB region
+set(CMAKE_C_FLAGS_DEBUG      "-Og -g3")
 
 # One firmware target per project folder. Each project owns its HAL copy,
 # linker script and startup file, exactly as STM32CubeIDE lays them out.
@@ -79,7 +81,11 @@ elseif(BL_SEC_KEY_HEADER)
   get_filename_component(_sec_key_header "${BL_SEC_KEY_HEADER}" ABSOLUTE)
   target_compile_definitions(fbl.elf PRIVATE "BL_SEC_KEY_HEADER=\"${_sec_key_header}\"")
 else()
-  message(WARNING "Building with the PUBLIC demo SecurityAccess key. For a real product pass -DBL_SEC_KEY_HEADER=path/to/key.h (python host/sign_tool.py genseckey writes one).")
+  # the demo key is public, so a build must ask for it by name instead of getting it by accident
+  if(NOT BL_ALLOW_DEMO_KEY)
+    message(FATAL_ERROR "No SecurityAccess key given. Pass -DBL_SEC_KEY_HEADER=path/to/key.h (python host/sign_tool.py genseckey writes one), or -DBL_ALLOW_DEMO_KEY=ON for a demo build with the PUBLIC key.")
+  endif()
+  message(WARNING "Building with the PUBLIC demo SecurityAccess key.")
 endif()
 fw(application   STM32F103RBT6_Application         startup_stm32f103rbtx.s STM32F103RBTX_FLASH.ld)
 fw(bluepill_bridge BluePill_Bridge                 startup_stm32f103c8tx.s STM32F103C8TX_FLASH.ld)

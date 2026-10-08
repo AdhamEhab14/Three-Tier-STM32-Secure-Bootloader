@@ -144,8 +144,10 @@ not the ability to forge firmware for the fleet.
 
 ## Power-loss safety
 
-Flash writes are not atomic, so the bootloader has to survive a power cut at any point
-of an update. This is tested on the real firmware in an emulator (no hardware needed):
+Flash writes are not atomic, so the bootloader has to survive a power cut during an update.
+The emulator tests cut power between flash operations (and inside an erase or program as
+modelled below); real flash can also be left with weak bits that no emulator reproduces, which
+is why the bench plan in `docs/hardware-test.md` pulls the plug on a real board too. This is tested on the real firmware in an emulator (no hardware needed):
 the flash model numbers every erase and program, stops the CPU at a chosen one, and the
 resulting flash image is booted again. Cut states for every other point are generated
 offline and only trusted because a real cut reproduces them byte for byte.
@@ -168,7 +170,7 @@ golden image (listed under future work).
 To build from the command line you need `arm-none-eabi-gcc`, CMake and Ninja:
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h
 cmake --build build        # boot_manager / fbl / application / bluepill_bridge .elf and .bin
 ```
 
@@ -184,9 +186,12 @@ python sign_tool.py genseckey      # SecurityAccess key, see below
 ```
 
 The SecurityAccess key is built in from a header: pass `-DBL_SEC_KEY_HEADER=host/keys/bl_seckey.h`
-to CMake (the host tools find `host/keys/bl_seckey.bin` on their own). Without it the firmware
-contains the **public demo key** from `bl_seckey_demo.h` and CMake says so, which is fine for a
-demo and nothing else.
+to CMake (the host tools find `host/keys/bl_seckey.bin` on their own). Without it CMake
+refuses to build the FBL; add `-DBL_ALLOW_DEMO_KEY=ON` to get the **public demo key** from
+`bl_seckey_demo.h`, which is fine for a demo and nothing else. Keep in mind that the key is
+symmetric and sits in flash, so it is only as secret as the chip's read-out protection (RDP).
+SecurityAccess gates the diagnostic session; it is not what protects the device, because every
+install still has to carry a valid Ed25519 signature.
 
 Flash the three projects with an ST-Link, in order: Boot Manager, then the FBL, then the
 App. To talk to the bootloader, hold **B1** and press reset — LD2 flickers, then it waits
@@ -232,6 +237,13 @@ download → install routine → ECU reset):
 python bl_host.py COMx udsinfo             # read a few data identifiers
 python bl_host.py COMx udsflash app.bin    # full UDS reprogramming sequence
 ```
+
+The order on the wire is `10 03` (extended), `10 02` (programming), `27` seed and key, optionally
+`85` and `28` to quiet the bus, `34` request download, `36` blocks, `37` exit, `31` check and install,
+then `11` reset. The extra `10 03` is the usual OEM flow, and it is enforced: asking for `10 02`
+straight from the default session is answered `7F 10 22` (conditions not correct), so a tester that
+follows the shorter flow from issue #2 has to add that one step. A programming session that is idle
+for 5 s falls back to default and locks again, so keep `3E 00` going during long pauses.
 
 ### Updating the bootloader
 
@@ -323,12 +335,6 @@ regenerate.
 - On-chip USB DFU
 - An internal golden/factory recovery image
 - A tamper-proof hardware rollback counter
-- A full session state machine for 0x10 — enforced transitions, S3 timeout to default,
-  and the Safety System session (0x04)
-  ([#4](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/4))
-- Table-driven per-service attributes: allowed sessions, minimum security level, and
-  physical/functional addressing
-  ([#3](https://github.com/AdhamEhab14/Three-Tier-STM32-Secure-Bootloader/issues/3))
 
 ## Diagrams
 

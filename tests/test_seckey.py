@@ -77,7 +77,7 @@ def native(tmp_path_factory):
     exes = {}
     for name, defs in (("demo", []), ("test", ["-DBL_TEST_KEYS", "-I" + os.path.join(ROOT, "tests", "keys")])):
         exe = str(out / ("cli_" + name))
-        cmd = [GCC, "-O1", "-Wall", "-Wextra", "-Werror", *defs, "-I" + os.path.join(CORE, "Inc"),
+        cmd = [GCC, "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-cpp", *defs, "-I" + os.path.join(CORE, "Inc"),
                os.path.join(ROOT, "tests", "native", "seccrypto_cli.c"),
                os.path.join(CORE, "Src", "bl_seccrypto.c"), "-o", exe]
         subprocess.run(cmd, check=True)
@@ -131,7 +131,7 @@ def test_secaccess_policy_unit_tests_pass(tmp_path):
     if not GCC:
         pytest.skip("no C compiler")
     exe = str(tmp_path / "secaccess_test")
-    subprocess.run([GCC, "-O1", "-Wall", "-Wextra", "-Werror", "-I" + os.path.join(CORE, "Inc"),
+    subprocess.run([GCC, "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-cpp", "-I" + os.path.join(CORE, "Inc"),
                     os.path.join(ROOT, "tests", "native", "secaccess_test.c"),
                     os.path.join(CORE, "Src", "bl_secaccess.c"), "-o", exe], check=True)
     out = subprocess.run([exe], capture_output=True, text=True)
