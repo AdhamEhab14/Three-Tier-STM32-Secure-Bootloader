@@ -3,6 +3,12 @@
 Default can only go to extended; programming and safety are reached through extended and
 leave to default; a reset or S3 timeout means default. Each service also has the sessions it
 works in and the security it needs (see bl_udspolicy.c, which tests/native checks on its own).
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_sessions.py
 """
 import pytest
 

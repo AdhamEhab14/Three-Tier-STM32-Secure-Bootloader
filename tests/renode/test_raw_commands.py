@@ -4,6 +4,12 @@ Images are authenticated when they are installed (VERIFY / the UDS install routi
 raw write anywhere else would let a host that can reach any transport put unsigned code in
 the app slot, or damage the Boot Manager, the FBL or the metadata. Only Slot B is open to
 the commands; everything else changes through a verified install.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_raw_commands.py
 """
 import contextlib
 import struct

@@ -14,6 +14,9 @@ It only runs when you point it at a board:
     set HW_PORT=COM3            (direct ST-Link UART, board in bootloader mode)
     pytest tests/test_uds_hardware.py -v
 
+In PowerShell set the variable with  $env:HW_PORT = "COM3"  instead of  set.
+See docs/testing.md section 8.
+
 Without HW_PORT the whole module is skipped, so CI and the model suite are
 unaffected. Every test is non-destructive: it only ever stages a few bytes into
 the A/B staging slot and never runs the install routine, so the live app is

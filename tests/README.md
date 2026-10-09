@@ -1,5 +1,8 @@
 # UDS conformance suite
 
+For how to test every part of the project (builds, static analysis, these host tests, the
+emulator, the ESP32 build and the hardware bench plan), start with [`docs/testing.md`](../docs/testing.md).
+
 An automated ISO 14229 conformance test for the bootloader's UDS server. It
 drives every service the way a diagnostic tester would and checks each response
 against the rule in `Core/Src/bl_uds.c` - both the services that must be
@@ -23,7 +26,7 @@ pointed at the real Nucleo (see *Running against real hardware*).
 | `uds_bus_sim.py` | the same exchange over a virtual CAN bus, with a frame trace |
 | `prod_bridge.py` | `CMD_UDS`-over-bridge transport to the production server |
 | `serial_bridge.py` | raw ISO-TP transport (standards server; needs raw-mode bridge firmware) |
-| `requirements.txt` | `pytest`, `pytest-html`, `python-can` |
+| `requirements.txt` | `pytest`, `pytest-html`, `python-can`, `pynacl`, `pyserial` |
 
 ## Running it
 
@@ -108,10 +111,8 @@ not answer that handshake, so this path is parked until that firmware lands.
 
 - **Both servers alike** - `vectors/uds_common.txt` is replayed against the production command
   layer (`renode/test_uds_common.py`) and the iso14229 server (its on-chip self-test).
-- **Sessions** - default / programming / extended accepted; an unknown
-  sub-function is refused with `subFunctionNotSupported (0x12)`.
 - **Unknown service** - refused with `serviceNotSupported (0x11)`.
-- **Sessions** - the four sessions, which changes are allowed, the lock on a session change, S3, and
+- **Sessions** - the four sessions (an unknown one gets `subFunctionNotSupported (0x12)`), which changes are allowed, the lock on a session change, S3, and
   functional addressing (`test_uds_sessions.py`); the C rules are compared with the model on every
   combination in `test_udspolicy.py`.
 - **Security access** - the correct seed/key (first 4 bytes of AES-CMAC of the

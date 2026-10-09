@@ -3,12 +3,16 @@ ISO 14229 conformance suite for the bootloader's UDS server.
 
 Each test states one rule the server must obey - a service that should be
 accepted, or a malformed / out-of-turn request that must be refused with a
-specific negative response code. Run it with:
+specific negative response code. It runs against the in-process VirtualEcu (or,
+with UDS_TARGET set, a real board through a bridge transport). The rules are
+lifted straight from Core/Src/bl_uds.c.
 
-    pytest --html=report.html --self-contained-html
+Run it (no board needed; from the repository root):
 
-against the in-process VirtualEcu, or later against the real board through a
-bridge transport. The rules are lifted straight from Core/Src/bl_uds.c.
+    cd tests
+    python -m pytest -v test_uds_conformance.py
+
+Add --html=report.html --self-contained-html for a report you can open in a browser.
 """
 from virtual_ecu import STAGING_BASE, STAGING_SIZE, key_for_seed
 

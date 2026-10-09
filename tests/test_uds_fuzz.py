@@ -15,6 +15,11 @@ assert two things every time:
 
 The seeds are fixed so a failure is reproducible. The harness runs against the
 host model; the same idea can be pointed at the real ECU over a transport.
+
+Run it (no board needed; from the repository root):
+
+    cd tests
+    python -m pytest -v test_uds_fuzz.py
 """
 import random
 

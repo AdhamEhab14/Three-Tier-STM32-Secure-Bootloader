@@ -3,6 +3,11 @@
  * the Python model:
  *   S <from> <to> <allowed>                 the session changes
  *   G <sid> <session> <security> <addr> <nrc>   the service gate, for every combination
+ *
+ * Run it: tests/test_udspolicy.py builds and runs this for you (cd tests; python -m pytest -v test_udspolicy.py).
+ * By hand, from the repository root, with a host gcc:
+ *   gcc -O1 -Wall -Wextra -I STM32F103RBT6_Secure_Bootloader/Core/Inc tests/native/udspolicy_dump.c STM32F103RBT6_Secure_Bootloader/Core/Src/bl_udspolicy.c -o udspolicy_dump
+ *   ./udspolicy_dump
  */
 #include <stdio.h>
 

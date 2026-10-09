@@ -1,4 +1,11 @@
-"""The real C firmware, running in the emulator, driven by the real host tool."""
+"""The real C firmware, running in the emulator, driven by the real host tool.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_boot.py
+"""
 import bl_host
 
 

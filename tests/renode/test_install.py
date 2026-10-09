@@ -4,6 +4,12 @@ The first test does a complete install over the emulated UART with the real host
 tool. The rest stage the image straight into Slot B (the same bytes the UART path
 would write, minus about two minutes of byte-by-byte injection) and send the real
 VERIFY command, so the signature, digest and version checks are the firmware's own.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_install.py
 """
 import os
 import struct

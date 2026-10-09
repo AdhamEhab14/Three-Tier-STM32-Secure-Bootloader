@@ -3,6 +3,12 @@
 tests/vectors/uds_common.txt is the shared list. The iso14229 server replays the same list in
 its on-chip self-test (test_uds_selftest.py), so a difference between the two servers shows up
 as a failure on one side or the other.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_uds_common.py
 """
 import os
 

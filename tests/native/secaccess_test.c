@@ -1,4 +1,11 @@
-/* Native unit test for the SecurityAccess brute-force policy (bl_secaccess.c). */
+/*
+ * Native unit test for the SecurityAccess brute-force policy (bl_secaccess.c).
+ *
+ * Run it: tests/test_seckey.py builds and runs this for you (cd tests; python -m pytest -v test_seckey.py).
+ * By hand, from the repository root, with a host gcc:
+ *   gcc -O1 -Wall -Wextra -I STM32F103RBT6_Secure_Bootloader/Core/Inc tests/native/secaccess_test.c STM32F103RBT6_Secure_Bootloader/Core/Src/bl_secaccess.c -o secaccess_test
+ *   ./secaccess_test
+ */
 #include <stdio.h>
 
 #include "bl_secaccess.h"

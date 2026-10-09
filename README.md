@@ -316,7 +316,8 @@ runs it on every push.
   suites on every push, publishing the report as a build artifact, next to the firmware
   builds, static analysis, the emulator and power-cut suites and the ESP32 build.
 
-See `tests/README.md` and `diagnostics/README.md` for details.
+How to run every kind of test yourself, with and without a board, is in
+[`docs/testing.md`](docs/testing.md). More detail: `tests/README.md` and `diagnostics/README.md`.
 
 ## Repository layout
 

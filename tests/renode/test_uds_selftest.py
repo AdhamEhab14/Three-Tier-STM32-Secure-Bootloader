@@ -5,6 +5,14 @@ self-test build (cmake -DBL_UDS_SELFTEST=ON) that boots straight into a tester a
 talking over a software ISO-TP loopback, checks the session rules and then runs the whole
 reprogramming sequence. It reports on LD2: solid on = pass, N blinks = failure code N.
 Here the board's LED pin is read in the emulator.
+
+Run it (no board needed; needs Renode and the self-test firmware, built once from the
+repository root):
+
+    cmake -S . -B build-udsself -G Ninja "-DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake" -DBL_TEST_KEYS=ON -DBL_UDS_SELFTEST=ON
+    cmake --build build-udsself
+    cd tests/renode
+    python -m pytest -v test_uds_selftest.py
 """
 import os
 

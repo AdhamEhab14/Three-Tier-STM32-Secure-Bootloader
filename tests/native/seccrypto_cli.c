@@ -8,6 +8,11 @@
  *
  * The CLI modes let pytest compare the firmware code with the Python implementation the
  * host tools use, on random inputs, not only on the published vectors.
+ *
+ * Run it: tests/test_seckey.py builds and runs this for you (cd tests; python -m pytest -v test_seckey.py).
+ * By hand, from the repository root, with a host gcc:
+ *   gcc -O1 -Wall -Wextra -Wno-cpp -I STM32F103RBT6_Secure_Bootloader/Core/Inc tests/native/seccrypto_cli.c STM32F103RBT6_Secure_Bootloader/Core/Src/bl_seccrypto.c -o seccrypto_cli
+ *   ./seccrypto_cli
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -4,6 +4,12 @@ The key is the first 4 bytes of AES-CMAC(K, seed), a seed works for one attempt 
 there is a boot delay, a wait after each wrong key and a 10 s lockout after three. The
 answers come from the host's own seckey.py. SecurityAccess is only allowed outside the
 default session, so every test starts by entering the extended one.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_security.py
 """
 import pytest
 
