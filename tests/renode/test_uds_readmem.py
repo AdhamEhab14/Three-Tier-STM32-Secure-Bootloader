@@ -53,3 +53,15 @@ def test_reading_needs_the_unlock(session):
 def test_only_the_staging_slot_can_be_read(unlocked, addr, size):
     ser, _ = unlocked
     assert uh.nrc(read(ser, addr, size), 0x23) == uh.NRC_OUT_OF_RANGE
+
+
+def test_only_what_this_session_downloaded_can_be_read(unlocked):
+    """Slot B can hold other things (after an FBL update, the FBL and its keys)."""
+    ser, _ = unlocked
+    assert uh.nrc(read(ser, pc.SLOT_B + 16, 8), 0x23) == uh.NRC_OUT_OF_RANGE      # past the download
+    assert uh.nrc(read(ser, pc.SLOT_B + 8, 16), 0x23) == uh.NRC_OUT_OF_RANGE      # runs past it
+    uh.enter(ser, uh.SESSION_DEFAULT)                                             # a new session...
+    uh.enter(ser, uh.SESSION_EXTENDED)
+    uh.enter(ser, uh.SESSION_PROGRAMMING)
+    assert bl_host.uds_unlock(ser)
+    assert uh.nrc(read(ser, pc.SLOT_B, 16), 0x23) == uh.NRC_OUT_OF_RANGE          # ...has downloaded nothing

@@ -109,3 +109,6 @@ def test_device_recovers_from_a_cut(session, sbl_run, name, spec):
     session.power_cycle()
     ser = RenodeSerial(session, timeout=2)
     assert pc.alive(session, ser), "the device never came back after a power cut at: " + name
+    # the new FBL ran, so the plaintext copy in Slot B (it carries the keys) is gone
+    assert session.read_word(pc.SLOT_B) == 0xFFFFFFFF, "Slot B still holds the FBL after: " + name
+    assert session.read_word(pc.SLOT_B + pc.FBL_SIZE - 4) == 0xFFFFFFFF

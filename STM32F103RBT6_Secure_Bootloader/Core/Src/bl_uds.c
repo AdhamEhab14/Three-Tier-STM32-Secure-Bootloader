@@ -372,6 +372,7 @@ static UDSErr_t bl_uds_fn(UDSServer_t *srv, UDSEvent_t event, void *arg)
         if (addr < BL_UDS_DL_BASE ||
             a->memSize == 0U ||
             a->memSize > BL_UDS_READ_MAX ||
+            (addr + a->memSize) > g_dl_addr ||   /* only what this session downloaded */
             (addr + a->memSize) > (BL_UDS_DL_BASE + BL_UDS_DL_SIZE)) {
             return UDS_NRC_RequestOutOfRange;
         }
