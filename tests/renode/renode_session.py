@@ -159,13 +159,14 @@ class RenodeSession:
         finally:
             self.cmd("cpu PerformanceInMips 72")
 
-    def uart_write(self, data, baud=115200):
+    def uart_write(self, data, baud=115200, port="usart2"):
         """Inject bytes one at a time at wire speed. The F103 USART has a
-        single-byte receive buffer, so bursts would overrun it, as on hardware."""
+        single-byte receive buffer, so bursts would overrun it, as on hardware.
+        port="usart1" is the ESP32 gateway's link (its replies are not captured)."""
         per_byte = "%.7f" % max(10.0 / baud, 0.0001)   # never finer than one 100 us quantum
         lines = []
         for b in data:
-            lines.append("usart2 WriteChar %d" % b)
+            lines.append("%s WriteChar %d" % (port, b))
             lines.append('emulation RunFor "%s"' % per_byte)
         self.cmd_batch(lines)
         self.virtual_time += float(per_byte) * len(data)

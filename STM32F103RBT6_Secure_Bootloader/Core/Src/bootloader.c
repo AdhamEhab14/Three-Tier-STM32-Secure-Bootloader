@@ -67,6 +67,14 @@ static const uint8_t BL_ENC_KEY[32] = BL_ENC_KEY_BYTES;
 
 #define BL_RX_MAX      256U
 static uint8_t  bl_rx[BL_RX_MAX];        /* the current command frame      */
+
+/* Which link the current frame came in on (the UDS session is tied to one) */
+#define BL_LINK_USART2  1U   /* ST-Link virtual COM port */
+#define BL_LINK_USART1  2U   /* ESP32 gateway (Wi-Fi / BLE) */
+#define BL_LINK_CAN     3U
+#define BL_LINK_SPI     4U
+#define BL_LINK_I2C     5U
+static uint8_t  bl_link = BL_LINK_USART2;
 static uint8_t  bl_reply[BL_RX_MAX];     /* the reply the handler builds   */
 static uint32_t bl_reply_len;
 static uint8_t  bl_go_pending;           /* set by GO: jump after replying */
@@ -250,6 +258,7 @@ void FBL_EnsureBmState(void)
 {
     const bm_state_t *s = (const bm_state_t *)BM_STATE_ADDR;
     uint32_t crc = BL_CRC_Region(FBL_BASE_ADDR, FBL_REGION_SIZE);
+    int was_update = (s->magic == BM_STATE_MAGIC && s->state == BM_FBL_UPDATING);
 
     /* We booted, so this FBL is good: stamp the record VALID with our real CRC.
        This also clears any UPDATING flag left by a self-update, and refreshes a
@@ -261,6 +270,12 @@ void FBL_EnsureBmState(void)
         ns.state = BM_FBL_VALID;
         FlashIf_ErasePages(BM_STATE_ADDR, 1U);
         FlashIf_Write(BM_STATE_ADDR, (const unsigned char *)&ns, sizeof(ns));
+    }
+
+    /* After a self-update Slot B still holds the new FBL in plaintext, keys included. It has
+       done its job once this FBL runs (the record above is VALID now), so wipe it. */
+    if (was_update) {
+        FlashIf_ErasePages(SLOT_B_BASE, FBL_REGION_SIZE / 1024U);
     }
 }
 
@@ -430,11 +445,13 @@ static int BL_InStaging(uint32_t addr, uint32_t len)
     return addr >= SLOT_B_BASE && addr <= SLOT_B_END && len <= (SLOT_B_END - addr);
 }
 
+static int BL_StagingFree(void);   /* below, next to the UDS session state */
+
 static void BL_Handle_Erase(void)      /* [addr:4][num_pages:1] */
 {
     uint32_t addr   = BL_ReadU32(&bl_rx[2]);
     uint32_t npages = bl_rx[6];
-    if ((addr % 1024U) != 0U || !BL_InStaging(addr, npages * 1024U)) {
+    if ((addr % 1024U) != 0U || !BL_InStaging(addr, npages * 1024U) || !BL_StagingFree()) {
         BL_ReplyByte(0U);
         return;
     }
@@ -447,7 +464,7 @@ static void BL_Handle_Write(void)      /* [addr:4][len:1][data:len] */
     uint32_t len   = bl_rx[6];
     /* what the frame really carries: LEN minus cmd, addr, len byte and CRC */
     uint32_t avail = ((uint32_t)bl_rx[0] >= 10U) ? (uint32_t)bl_rx[0] - 10U : 0U;
-    if ((addr & 1U) != 0U || len > avail || !BL_InStaging(addr, len)) {
+    if ((addr & 1U) != 0U || len > avail || !BL_InStaging(addr, len) || !BL_StagingFree()) {
         BL_ReplyByte(0U);
         return;
     }
@@ -677,24 +694,23 @@ static void BL_Handle_LockRdp(void)
     HAL_FLASH_Unlock();
     HAL_FLASH_OB_Unlock();
 
-    ok = ob_wait();
-    if (ok) {                                                      /* erase the block */
-        FLASH->CR |= FLASH_CR_OPTER;
-        FLASH->CR |= FLASH_CR_STRT;
-        ok = ob_wait();
-        FLASH->CR &= ~FLASH_CR_OPTER;
-    }
-    /* Once the block is erased every byte has to go back, so a failed write is retried
-       rather than abandoned: stopping half way would leave the next reset without the
-       Boot Manager's write protection. The WRP bytes go first for the same reason. */
+    ok = ob_wait();                                                /* erase the block */
+    FLASH->CR |= FLASH_CR_OPTER;
+    FLASH->CR |= FLASH_CR_STRT;
+    ok = ob_wait() && ok;
+    FLASH->CR &= ~FLASH_CR_OPTER;
+
+    /* Every byte is written back even if the erase reported an error (it may have erased
+       anyway), and a failed write is retried rather than abandoned: stopping half way would
+       leave the next reset without the Boot Manager's write protection. WRP goes first. */
     for (uint32_t i = 0U; i < 4U; i++) {
         uint8_t v = (uint8_t)(wrpr >> (8U * i));
         int done = 0;
-        for (uint32_t tries = 0U; ok && !done && tries < 3U; tries++) done = ob_write(wrp[i], v);
-        ok = ok && done;
+        for (uint32_t tries = 0U; !done && tries < 3U; tries++) done = ob_write(wrp[i], v);
+        ok = done && ok;
     }
-    ok = ok && (ob_write(&OB->USER, user) || ob_write(&OB->USER, user));
-    ok = ok && (ob_write(&OB->RDP, 0x00U) || ob_write(&OB->RDP, 0x00U));   /* anything but 0xA5 = level 1 */
+    ok = (ob_write(&OB->USER, user) || ob_write(&OB->USER, user)) && ok;
+    ok = (ob_write(&OB->RDP, 0x00U) || ob_write(&OB->RDP, 0x00U)) && ok;   /* anything but 0xA5 = level 1 */
 
     if (ok) {
         BL_ReplyByte(1U);
@@ -748,6 +764,8 @@ static void BL_Handle_LockRdp(void)
 #define UDS_MAX_BLOCK         128U       /* max TransferData payload */
 
 static uint8_t  uds_session = SESSION_DEFAULT;
+static uint8_t  uds_link;                /* the link that opened the current session (BL_LINK_*) */
+static uint32_t uds_read_end;            /* end of what this session downloaded: all 0x23 may read */
 static uint32_t uds_last_ms;            /* when the last request came in, for the S3 timeout */
 static uint8_t  uds_unlocked;
 static uint8_t  uds_seed[4];            /* seed handed out, awaiting its key */
@@ -763,7 +781,14 @@ static uint8_t  bl_uds_reset_pending;
    transport could lock the chip. */
 static int BL_LockAllowed(void)
 {
-    return (uds_session == SESSION_PROGRAMMING && uds_unlocked) ? 1 : 0;
+    return (uds_session == SESSION_PROGRAMMING && uds_unlocked && bl_link == uds_link) ? 1 : 0;
+}
+
+/* While a UDS session is open on one link, Slot B is its download area: raw ERASE and
+   WRITE from another link could spoil the download, so they wait for that session to end. */
+static int BL_StagingFree(void)
+{
+    return (uds_session == SESSION_DEFAULT || bl_link == uds_link) ? 1 : 0;
 }
 
 /* Finer than the ms tick; only used to make seeds differ between power-ups. */
@@ -808,6 +833,8 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
         if (!BL_UdsSessionChangeAllowed(uds_session, sub))
             return uds_nrc(resp, sid, NRC_CONDITIONS);
         uds_session  = sub;
+        uds_link     = bl_link;            /* the session belongs to the link that asked for it */
+        uds_read_end = 0U;
         uds_unlocked = 0U;                 /* a session change always re-locks */
         uds_seed_valid = 0U;
         uds_dl_addr = 0U; uds_dl_remaining = 0U;   /* and drops a download in progress */
@@ -893,7 +920,9 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
         if (len < 10U || req[1] != 0x44U) return uds_nrc(resp, sid, NRC_INVALID_LENGTH);
         addr = ((uint32_t)req[2] << 24) | ((uint32_t)req[3] << 16) | ((uint32_t)req[4] << 8) | req[5];
         size = ((uint32_t)req[6] << 24) | ((uint32_t)req[7] << 16) | ((uint32_t)req[8] << 8) | req[9];
-        if (size == 0U || size > BL_UDS_READ_MAX || !BL_InStaging(addr, size))
+        /* only what this session downloaded: after an FBL update Slot B holds keys */
+        if (size == 0U || size > BL_UDS_READ_MAX || addr < SLOT_B_BASE ||
+            addr > uds_read_end || size > uds_read_end - addr)
             return uds_nrc(resp, sid, NRC_OUT_OF_RANGE);
         resp[0] = sid + UDS_POS;
         memcpy(&resp[1], (const void *)addr, size);
@@ -927,6 +956,7 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
         if (!FlashIf_ErasePages(SLOT_B_BASE, npages))
             return uds_nrc(resp, sid, NRC_PROG_FAILURE);
         uds_dl_addr = SLOT_B_BASE; uds_dl_remaining = size; uds_bsc = 1U;
+        uds_read_end = SLOT_B_BASE;
         resp[0] = sid + UDS_POS; resp[1] = 0x20;                    /* 2-byte maxBlockLength */
         resp[2] = (uint8_t)(UDS_MAX_BLOCK >> 8); resp[3] = (uint8_t)UDS_MAX_BLOCK;
         return 4U;
@@ -946,6 +976,7 @@ static uint32_t uds_dispatch(const uint8_t *req, uint32_t len, uint8_t *resp)
         if (dn > 0U && !FlashIf_Write(uds_dl_addr, &req[2], dn))
             return uds_nrc(resp, sid, NRC_PROG_FAILURE);
         uds_dl_addr += dn; uds_dl_remaining -= dn; uds_bsc++;
+        uds_read_end = uds_dl_addr;
         resp[0] = sid + UDS_POS; resp[1] = bsc;
         return 2U;
     }
@@ -1001,6 +1032,10 @@ static uint32_t UDS_Handle(const uint8_t *req, uint32_t len, uint8_t *resp)
     uint32_t n;
 
     if (len < 1U) return 0U;
+    /* A non-default session belongs to the link that opened it: a tester on CAN that has
+       unlocked does not unlock the UART, Wi-Fi or BLE for someone else. */
+    if (uds_session != SESSION_DEFAULT && bl_link != uds_link)
+        return uds_nrc(resp, req[0], NRC_CONDITIONS);
     uds_last_ms = HAL_GetTick();
     gate = BL_UdsGate(req[0], uds_session, uds_unlocked ? 1U : 0U, BL_ADDR_PHYSICAL);
     n = gate ? uds_nrc(resp, req[0], gate) : uds_dispatch(req, len, resp);
@@ -1017,6 +1052,7 @@ static void uds_s3_poll(void)
         uds_unlocked = 0U;
         uds_seed_valid = 0U;
         uds_dl_addr = 0U; uds_dl_remaining = 0U;
+        uds_read_end = 0U;
     }
 }
 
@@ -1336,6 +1372,8 @@ void BL_Run(void)
         bl_fbl_update_pending = 0U;
         bl_lock_bm_pending = 0U;
         bl_uds_reset_pending = 0U;
+        bl_link = via_can ? BL_LINK_CAN : via_u1 ? BL_LINK_USART1 : via_spi ? BL_LINK_SPI :
+                  via_i2c ? BL_LINK_I2C : BL_LINK_USART2;
         BL_ProcessFrame(total);
 
         if (via_can)
