@@ -1,4 +1,11 @@
-/* Native unit test for the diagnostic session rules and service attributes (bl_udspolicy.c). */
+/*
+ * Native unit test for the diagnostic session rules and service attributes (bl_udspolicy.c).
+ *
+ * Run it: tests/test_udspolicy.py builds and runs this for you (cd tests; python -m pytest -v test_udspolicy.py).
+ * By hand, from the repository root, with a host gcc:
+ *   gcc -O1 -Wall -Wextra -I STM32F103RBT6_Secure_Bootloader/Core/Inc tests/native/udspolicy_test.c STM32F103RBT6_Secure_Bootloader/Core/Src/bl_udspolicy.c -o udspolicy_test
+ *   ./udspolicy_test
+ */
 #include <stdio.h>
 
 #include "bl_udspolicy.h"

@@ -3,6 +3,13 @@ against the firmware's own C code (compiled natively) on random inputs.
 
 Nothing here needs a board or an emulator, only a C compiler for the cross-check
 (the cross-check tests skip cleanly without one).
+
+Run it (no board needed; from the repository root):
+
+    cd tests
+    python -m pytest -v test_seckey.py
+
+The C parts are compiled with a host gcc on the PATH and skipped without one.
 """
 import os
 import random

@@ -3,6 +3,12 @@
 bl_host.udsflash does what a diagnostic tester does: programming session, SecurityAccess,
 RequestDownload, TransferData, TransferExit, the install routine, ECUReset. It is run here
 unmodified against the real firmware.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_uds_flash.py
 """
 import os
 import struct

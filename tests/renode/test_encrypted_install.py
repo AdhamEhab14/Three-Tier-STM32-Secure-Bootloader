@@ -3,6 +3,12 @@
 The signature covers the ciphertext, so an image encrypted under a different key (an old key
 after a rotation, say) is still correctly signed. The header carries the CRC of the plaintext
 (format 2) and the board checks it before it erases the working app.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_encrypted_install.py
 """
 import os
 import struct

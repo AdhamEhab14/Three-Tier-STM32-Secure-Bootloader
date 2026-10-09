@@ -2,6 +2,11 @@
 
 The same behaviour is checked on the real firmware in tests/renode/test_sessions.py; the
 model has to agree with it (tests/test_udspolicy.py compares the tables).
+
+Run it (no board needed; from the repository root):
+
+    cd tests
+    python -m pytest -v test_uds_sessions.py
 """
 import pytest
 

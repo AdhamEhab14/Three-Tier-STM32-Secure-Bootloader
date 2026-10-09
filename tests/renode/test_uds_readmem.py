@@ -1,4 +1,11 @@
-"""ReadMemoryByAddress (0x23) on the production command layer: read back a download, nothing else."""
+"""ReadMemoryByAddress (0x23) on the production command layer: read back a download, nothing else.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_uds_readmem.py
+"""
 import pytest
 
 import bl_host

@@ -4,6 +4,13 @@ and against the Python model, on every combination.
 The model (virtual_ecu.py) carries its own copy of the rules. If the two ever disagree the
 model-based tests would be testing something the firmware does not do, so they are compared
 exhaustively here.
+
+Run it (no board needed; from the repository root):
+
+    cd tests
+    python -m pytest -v test_udspolicy.py
+
+The C parts are compiled with a host gcc on the PATH and skipped without one.
 """
 import os
 import shutil

@@ -1,4 +1,10 @@
-"""The C table of shared UDS requests must match the text file it is made from."""
+"""The C table of shared UDS requests must match the text file it is made from.
+
+Run it (no board needed; from the repository root):
+
+    cd tests
+    python -m pytest -v test_uds_vectors_sync.py
+"""
 import os
 import subprocess
 import sys

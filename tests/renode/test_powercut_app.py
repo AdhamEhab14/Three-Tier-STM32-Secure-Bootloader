@@ -4,6 +4,15 @@ An install erases the app pages, copies the app in, rewrites the metadata (insta
 version, which is also the anti-rollback floor) and then the boot-trial page. After a cut
 at any of those points the device must come back up in the bootloader and still refuse an
 older image.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_powercut_app.py
+
+This is one of the slow power-cut files (marked powercut). Set BL_THOROUGH=1 for a denser sweep
+of cut points.
 """
 import os
 

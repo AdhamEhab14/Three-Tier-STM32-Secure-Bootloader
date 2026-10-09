@@ -3,6 +3,15 @@
 The updater erases the whole 40 KB FBL region and then copies the new image over from
 Slot B, so a cut after the first erase leaves a half-written FBL. The Boot Manager has to
 bring the device back from each of those states.
+
+Run it (no board needed; needs Renode and the build-test firmware, see docs/testing.md
+section 6 for the one-time build):
+
+    cd tests/renode
+    python -m pytest -v test_powercut_fbl.py
+
+This is one of the slow power-cut files (marked powercut). Set BL_THOROUGH=1 for a denser sweep
+of cut points.
 """
 import struct
 
