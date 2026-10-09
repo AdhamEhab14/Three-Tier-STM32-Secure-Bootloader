@@ -42,15 +42,15 @@ isotp-c transport    --  bl_isotp.c -->  CAN1 (bxCAN)
   ID.
 - **[`Core/Src/bl_uds.c`](Core/Src/bl_uds.c)** — a `UDSTp` transport bridge over one isotp-c link,
   `UDSMillis()` wired to `HAL_GetTick()`, and the UDS service handlers.
-- **Addressing** — requests on `0x7E0`, replies on `0x7E8`.
+- **Addressing** — physical requests on `0x7E0`, functional ones on `0x7DF`, replies on `0x7E8`.
 
 ### UDS services
 
 | Service | SID | Behaviour |
 | --- | --- | --- |
-| DiagnosticSessionControl | `0x10` | default / programming / extended session |
+| DiagnosticSessionControl | `0x10` | default / programming / extended / safety session (see [Sessions](#sessions-and-per-service-rules)) |
 | SecurityAccess | `0x27` | seed/key unlock (see [Security](#security)) |
-| CommunicationControl | `0x28` | enable/disable normal communication during programming |
+| CommunicationControl | `0x28` | enable/disable normal communication (extended and programming) |
 | ControlDTCSetting | `0x85` | suspend/resume DTC logging during programming |
 | RoutineControl | `0x31` | routine `0xFF00` erases the staging slot; `0xFF01` returns a CRC-32 of a region (CheckMemory) |
 | RequestDownload | `0x34` | validates the target lies inside the staging slot |
@@ -58,6 +58,8 @@ isotp-c transport    --  bl_isotp.c -->  CAN1 (bxCAN)
 | RequestTransferExit | `0x37` | ends the download |
 | ReadMemoryByAddress | `0x23` | reads the staging slot back, for download verification |
 | ECUReset | `0x11` | acknowledges, then resets the MCU |
+| ReadDataByIdentifier | `0x22` | `F186` active session, `F195` bootloader version |
+| TesterPresent | `0x3E` | keeps a session alive; works in every session and functionally |
 
 New firmware is streamed into **Slot B**, the A/B staging slot. The Ed25519 signature check and the
 copy-into-Slot-A swap remain the responsibility of the existing command layer.

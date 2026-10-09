@@ -37,6 +37,7 @@ CMD_VERIFY  = 0x17
 CMD_UPDATE_FBL   = 0x1B
 CMD_LOCK_BM      = 0x1C
 CMD_BIST         = 0x1D
+CMD_LOCK_RDP     = 0x1E
 CMD_UDS          = 0x20   # wraps a UDS (ISO 14229) request as its payload
 ACK, NACK   = 0xCD, 0xAB
 
@@ -422,11 +423,19 @@ def update_fbl(ser, path):
         print("FBL update REJECTED (bad signature, wrong type, or older version):", ok, p.hex(" "))
 
 
+def unlock_for_lock(ser):
+    """The lock commands need the same unlock as a download: programming session + SecurityAccess."""
+    return (uds_req(ser, [0x10, 0x03], "extended session") is not None and
+            uds_req(ser, [0x10, 0x02], "programming session") is not None and
+            uds_unlock(ser))
+
+
 def lock_bm(ser):
     print("This write-protects the Boot Manager (flash pages 0-15).")
     print("After this the BM cannot be reflashed until you remove WRP in STM32CubeProgrammer.")
     if input("Type LOCK to proceed: ").strip() != "LOCK":
         print("Aborted."); return
+    if not unlock_for_lock(ser): return
     ok, p = transact(ser, CMD_LOCK_BM)
     if ok_reply(ok, p):
         print("Accepted - the board is applying write protection and will reset.")
@@ -434,7 +443,23 @@ def lock_bm(ser):
         # OB_Launch resets before replying is unusual (we defer it), but tolerate no-reply
         print("No ACK returned; if the board reset, WRP was applied. Verify in CubeProgrammer.")
     else:
-        print("LOCK_BM REJECTED (option-byte program failed):", p.hex(" "))
+        print("LOCK_BM REJECTED (not unlocked, or the option-byte program failed):", p.hex(" "))
+
+
+def lock_rdp(ser):
+    print("This turns on read protection level 1: no flash read-out over SWD/JTAG.")
+    print("Going back to level 0 (STM32CubeProgrammer) MASS-ERASES the chip: BM, FBL, app, keys.")
+    print("The Boot Manager write protection is kept. Power-cycle the board afterwards.")
+    if input("Type READ-PROTECT to proceed: ").strip() != "READ-PROTECT":
+        print("Aborted."); return
+    if not unlock_for_lock(ser): return
+    ok, p = transact(ser, CMD_LOCK_RDP)
+    if ok_reply(ok, p):
+        print("Accepted - the board is applying read protection and will reset.")
+    elif not ok:
+        print("No ACK returned; if the board reset, RDP was applied. Verify in CubeProgrammer.")
+    else:
+        print("LOCK_RDP REJECTED (not unlocked, or the option-byte program failed):", p.hex(" "))
 
 
 def main():
@@ -448,6 +473,8 @@ def main():
         update_fbl(ser, sys.argv[3])
     elif len(sys.argv) >= 3 and sys.argv[2] == "lockbm":
         lock_bm(ser)
+    elif len(sys.argv) >= 3 and sys.argv[2] == "lockrdp":
+        lock_rdp(ser)
     elif len(sys.argv) >= 3 and sys.argv[2] == "bist":
         bist(ser)
     elif len(sys.argv) >= 3 and sys.argv[2] == "udsinfo":

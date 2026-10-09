@@ -10,16 +10,101 @@
  */
 #include "can_bl.h"
 #include "can.h"    /* hcan, configured by CubeMX */
+#include <string.h>
 
 /* 1 = internal loopback (no transceiver). 0 = real CAN bus. */
 #define CAN_BL_LOOPBACK   0
 
+/* ==========================================================================
+ *  Receive path: the RX FIFO 0 interrupt moves every frame from the 3-deep
+ *  hardware FIFO into a RAM ring, and the code below reads frames from the
+ *  ring. So a busy main loop (a signature check takes a second or two) cannot
+ *  lose frames to a FIFO overrun. One writer (the interrupt) and one reader
+ *  (the main loop), so the two indices need no lock.
+ * ========================================================================== */
+#define CAN_RX_RING  16U                  /* frames; a power of two */
+
+typedef struct {
+    uint32_t id;
+    uint8_t  ext;                         /* 1 = 29-bit ID */
+    uint8_t  dlc;
+    uint8_t  data[8];
+} can_rx_frame_t;
+
+static can_rx_frame_t    rx_ring[CAN_RX_RING];
+static volatile uint32_t rx_head;         /* advanced by the interrupt only */
+static volatile uint32_t rx_tail;         /* advanced by the reader only    */
+static volatile uint32_t rx_dropped;      /* frames lost to a full ring     */
+
+static void can_rx_fifo0_pending(CAN_HandleTypeDef *h)
+{
+    CAN_RxHeaderTypeDef hdr;
+    uint8_t data[8];
+
+    while (HAL_CAN_GetRxFifoFillLevel(h, CAN_RX_FIFO0) > 0U) {
+        if (HAL_CAN_GetRxMessage(h, CAN_RX_FIFO0, &hdr, data) != HAL_OK) {
+            break;
+        }
+        if (rx_head - rx_tail >= CAN_RX_RING) {
+            rx_dropped++;                 /* reader fell behind: keep the older frames */
+            continue;
+        }
+        can_rx_frame_t *f = &rx_ring[rx_head % CAN_RX_RING];
+        f->ext = (hdr.IDE == CAN_ID_EXT) ? 1U : 0U;
+        f->id  = f->ext ? hdr.ExtId : hdr.StdId;
+        f->dlc = (uint8_t)hdr.DLC;
+        memcpy(f->data, data, sizeof(f->data));
+        __DMB();                          /* the frame is complete before the reader can see it */
+        rx_head++;
+    }
+}
+
+/* Overrides the weak alias in the startup file. If CubeMX is ever told to generate this
+   handler too, the duplicate shows up as a link error rather than a silent clash. */
+void USB_LP_CAN1_RX0_IRQHandler(void)
+{
+    HAL_CAN_IRQHandler(&hcan);
+}
+
+int CAN_BL_Read(uint32_t *id, uint8_t *ext, uint8_t data[8], uint8_t *dlc)
+{
+    const can_rx_frame_t *f;
+
+    if (rx_tail == rx_head) {
+        return 0;
+    }
+    f = &rx_ring[rx_tail % CAN_RX_RING];
+    *id  = f->id;
+    *ext = f->ext;
+    *dlc = f->dlc;
+    memcpy(data, f->data, 8U);
+    __DMB();                              /* done with the slot before the interrupt may reuse it */
+    rx_tail++;
+    return 1;
+}
+
+uint32_t CAN_BL_RxPending(void)
+{
+    return rx_head - rx_tail;
+}
+
+uint32_t CAN_BL_RxDropped(void)
+{
+    return rx_dropped;
+}
+
 void CAN_BL_Init(void)
 {
     /* Re-init CAN with our chosen mode (overrides the CubeMX default). */
+    HAL_NVIC_DisableIRQ(USB_LP_CAN1_RX0_IRQn);
     HAL_CAN_DeInit(&hcan);
     hcan.Init.Mode = (CAN_BL_LOOPBACK) ? CAN_MODE_LOOPBACK : CAN_MODE_NORMAL;
     HAL_CAN_Init(&hcan);
+    rx_head = 0U;
+    rx_tail = 0U;
+    rx_dropped = 0U;
+    /* register callbacks are on in this project, and HAL_CAN_Init resets them */
+    HAL_CAN_RegisterCallback(&hcan, HAL_CAN_RX_FIFO0_MSG_PENDING_CB_ID, can_rx_fifo0_pending);
 
     /* Accept every message ID into RX FIFO 0 (mask of 0 matches all IDs). */
     CAN_FilterTypeDef filter = {0};
@@ -35,14 +120,18 @@ void CAN_BL_Init(void)
     HAL_CAN_ConfigFilter(&hcan, &filter);
 
     HAL_CAN_Start(&hcan);
+    HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+    HAL_NVIC_SetPriority(USB_LP_CAN1_RX0_IRQn, 1U, 0U);
+    HAL_NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
 }
 
 int CAN_BL_SelfTest(void)
 {
     CAN_TxHeaderTypeDef tx = {0};
-    CAN_RxHeaderTypeDef rx = {0};
     uint8_t  tx_data[8] = { 'C', 'A', 'N', '-', 'L', 'O', 'O', 'P' };
     uint8_t  rx_data[8] = {0};
+    uint32_t rx_id;
+    uint8_t  rx_ext, rx_dlc;
     uint32_t mailbox;
     uint32_t timeout;
     int i;
@@ -57,18 +146,14 @@ int CAN_BL_SelfTest(void)
         return 0;
     }
 
-    /* in loopback the frame comes straight back into RX FIFO 0 */
+    /* in loopback the frame comes straight back (into the RX ring, via the interrupt) */
     timeout = 200000U;
-    while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) == 0U) {
+    while (!CAN_BL_Read(&rx_id, &rx_ext, rx_data, &rx_dlc)) {
         if (timeout-- == 0U) return 0;   /* nothing came back */
     }
 
-    if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &rx, rx_data) != HAL_OK) {
-        return 0;
-    }
-
     /* did we get back exactly what we sent? */
-    if (rx.StdId != 0x123U || rx.DLC != 8U) return 0;
+    if (rx_ext != 0U || rx_id != 0x123U || rx_dlc != 8U) return 0;
     for (i = 0; i < 8; i++) {
         if (rx_data[i] != tx_data[i]) return 0;
     }
@@ -117,14 +202,15 @@ static int cantp_send_frame(uint32_t can_id, const uint8_t *bytes, uint8_t lengt
 /* Read one raw CAN frame. Spins until a frame arrives or the counter hits 0. */
 static int cantp_recv_frame(uint8_t *bytes, uint32_t *timeout)
 {
-    CAN_RxHeaderTypeDef header;
+    uint32_t id;
+    uint8_t  ext, dlc;
 
-    while (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) == 0U) {
+    while (!CAN_BL_Read(&id, &ext, bytes, &dlc)) {
         if ((*timeout)-- == 0U) {
             return 0;
         }
     }
-    return (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, bytes) == HAL_OK);
+    return 1;
 }
 
 /*
@@ -293,7 +379,7 @@ int CANTP_Recv(uint8_t *data, uint32_t *length, uint32_t timeout, uint32_t fc_id
  */
 int CANTP_RecvNB(uint8_t *data, uint32_t *length, uint32_t fc_id)
 {
-    if (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0) == 0U) {
+    if (CAN_BL_RxPending() == 0U) {
         return 0;
     }
     return CANTP_Recv(data, length, 500000U, fc_id);

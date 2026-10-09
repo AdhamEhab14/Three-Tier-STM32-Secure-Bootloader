@@ -93,3 +93,10 @@ def test_staging_itself_is_still_open(session, ser):
     assert erase(ser, SLOT_B_END - 1024, 1)            # the last page of staging
     assert write(ser, SLOT_B_END - 4, b"\x01\x02\x03\x04")
     assert session.read_word(SLOT_B_END - 4) == 0x04030201
+
+
+@pytest.mark.parametrize("cmd", [bl_host.CMD_LOCK_BM, bl_host.CMD_LOCK_RDP], ids=["lockbm", "lockrdp"])
+def test_the_lock_commands_need_an_unlock(session, ser, cmd):
+    """Locking changes the chip for good, so it needs the programming session and SecurityAccess."""
+    ok, p = bl_host.transact(ser, cmd)
+    assert ok and p == b"\x00", "a lock command was accepted without an unlock: %s" % p.hex()

@@ -175,8 +175,10 @@ SECTIONS
     . = ALIGN(8);
   } >RAM
 
-  /* Secondary Bootloader (SBL): executes from RAM (VMA), stored in FLASH (LMA) */
-  .sbl 0x20001000 :
+  /* Secondary Bootloader (SBL): executes from RAM (VMA), stored in FLASH (LMA).
+     It only runs once the FBL is finished, so its RAM is free by then; it sits 12 KB in,
+     clear of the FBL's variables, and the FBL finds it through _sbl_ram_start. */
+  .sbl 0x20003000 :
   {
     . = ALIGN(4);
     _sbl_ram_start = .;

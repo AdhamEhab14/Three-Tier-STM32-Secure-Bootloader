@@ -5,7 +5,7 @@
  * @date    18/08/2026
  * @brief   Secondary Bootloader (SBL) / Bootloader Updater (BLU).
  *
- * Linked and executed from RAM (0x20001000). The FBL copies it into RAM and
+ * Linked and executed from RAM (the .sbl section, 0x20003000). The FBL copies it into RAM and
  * jumps to it to perform a job the FBL cannot do to itself: erase and
  * reprogram the FBL flash region.
  *

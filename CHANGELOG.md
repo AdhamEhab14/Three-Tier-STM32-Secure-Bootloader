@@ -68,6 +68,24 @@ All notable changes to this project are recorded here. The format follows
   sequence does.
   Found by replaying one shared request list against both servers (below).
 
+- The ODX description gains ReadDataByIdentifier (F186 active session, F195 bootloader
+  version) and TesterPresent; the service tables in the docs list them too.
+
+- CAN frames are received by the RX FIFO 0 interrupt into a 16-frame RAM ring instead of being
+  polled from the 3-deep hardware FIFO, so a busy main loop cannot lose frames (#6). Every
+  peripheral interrupt is masked and cleared before the jump to the app and before the SBL runs.
+- The SBL now runs from 0x20003000 instead of 0x20001000 and the FBL takes its address from the
+  linker: the FBL's variables had 192 bytes left below the old address.
+
+- The Boot Manager stretches a running independent watchdog to its longest timeout (~26 s)
+  at start. The demo app starts it at ~2 s and it survives a reset, so in recovery mode a
+  signature check or the Boot Manager's FBL repair could be cut short by it again and again.
+- Every flash erase and write is read back (`flash_if.c`), so a half-erased page or a weakly
+  programmed cell fails the operation instead of surfacing later.
+- `lockbm` needs the programming session and a SecurityAccess unlock (`bl_host.py` does it);
+  anyone on any link could send it before. New `lockrdp` turns on read protection level 1
+  and keeps the Boot Manager's write protection, which the HAL's RDP change would drop.
+
 ### Tests
 - `tests/vectors/uds_common.txt` is a list of requests with the start of the expected answer.
   The production command layer replays it in the emulator (`test_uds_common.py`) and the

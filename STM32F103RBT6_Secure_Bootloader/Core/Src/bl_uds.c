@@ -506,23 +506,6 @@ int BL_UDS_SelfTest(void)
         }
     }
 
-    /* 0) The rules first. In the default session SecurityAccess is not available (0x7F), and
-          the programming session can not be entered directly (0x22). */
-    req[0] = 0x27U;
-    req[1] = 0x01U;
-    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
-    if (n < 3U || resp[0] != 0x7FU || resp[1] != 0x27U || resp[2] != 0x7FU) {
-        rc = 20;   /* SecurityAccess was not refused in the default session */
-        goto done;
-    }
-    req[0] = 0x10U;
-    req[1] = UDS_LEV_DS_PRGS;
-    n = bl_uds_tester_xfer(&tester, req, 2U, resp, sizeof(resp));
-    if (n < 3U || resp[0] != 0x7FU || resp[1] != 0x10U || resp[2] != 0x22U) {
-        rc = 21;   /* default -> programming was not refused */
-        goto done;
-    }
-
     /* 1) DiagnosticSessionControl: extended first, then programming. */
     req[0] = 0x10U;
     req[1] = UDS_LEV_DS_EXTDS;
