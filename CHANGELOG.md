@@ -30,6 +30,15 @@ All notable changes to this project are recorded here. The format follows
   erasing Slot A. **Encrypted images must be re-signed** with this `sign_tool.py`; plaintext
   images signed in format 1 still install.
 
+- A UDS session belongs to the link that opened it: while a tester on CAN has the board
+  unlocked, requests and the lock commands from UART, Wi-Fi, BLE, SPI or I2C get NRC 0x22,
+  and raw ERASE/WRITE of Slot B from another link are refused until the session ends.
+- ReadMemoryByAddress only reads back what the current session downloaded (both servers).
+  After an FBL self-update Slot B holds the new FBL in plaintext, keys included, and the FBL
+  now wipes it the first time it boots.
+- `lockrdp` writes all the option bytes back even if the erase reported an error, so a failed
+  run cannot leave the chip without the Boot Manager's write protection.
+
 ### Changed
 - SecurityAccess (UDS 0x27) answers a seed with the first 4 bytes of AES-CMAC (RFC 4493)
   instead of an XOR with a constant. Seeds are derived under the same key (they were a

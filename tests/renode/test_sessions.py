@@ -143,3 +143,21 @@ def test_the_timeout_also_drops_security(board):
     enter(ser, SESSION_PROGRAMMING)
     request = (0x34, 0x00, 0x44, 0x08, 0x01, 0x50, 0x00, 0, 0, 0, 0x10)
     assert nrc(uds(ser, *request), 0x34) == NRC_SECURITY_DENIED
+
+
+def test_a_session_belongs_to_the_link_that_opened_it(board):
+    """Unlocked on the ST-Link UART, a download request over the ESP32's UART must not be served."""
+    session, ser = board
+    import powercut as pc
+    enter(ser, SESSION_EXTENDED)
+    enter(ser, SESSION_PROGRAMMING)
+    assert bl_host.uds_unlock(ser)
+    request = (0x34, 0x00, 0x44, *pc.SLOT_B.to_bytes(4, "big"), 0, 0, 0, 0x10)
+
+    session.cmd("sysbus WriteDoubleWord 0x%X 0x12345678" % pc.SLOT_B)
+    session.uart_write(bl_host.build_frame(bl_host.CMD_UDS, bytes(request)), port="usart1")
+    session.run_for(0.5)
+    assert session.read_word(pc.SLOT_B) == 0x12345678, "a request from another link erased Slot B"
+
+    assert uds(ser, *request)[0] == 0x74            # the link that owns the session still can
+    assert session.read_word(pc.SLOT_B) == 0xFFFFFFFF
