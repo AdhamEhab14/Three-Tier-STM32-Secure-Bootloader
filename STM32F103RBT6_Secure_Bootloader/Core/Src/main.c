@@ -146,21 +146,21 @@ void BootMgr_JumpToApp(void)
     ((pFunction)(*(volatile uint32_t *)(APP_ADDRESS + 4)))(); /* jump to app reset handler */
 }
 
-extern uint32_t _sbl_flash_start, _sbl_ram_start, _sbl_ram_end;
+extern uint32_t _sbl_flash_start[], _sbl_ram_start[], _sbl_ram_end[];   /* linker symbols */
 
 /* Copy the SBL from FLASH into RAM, then execute it from RAM */
 void BootMgr_RunSBL(void)
 {
-    uint32_t *src = &_sbl_flash_start;
-    uint32_t *dst = &_sbl_ram_start;
-    while (dst < &_sbl_ram_end) { *dst++ = *src++; }   /* stage image into RAM */
+    uint32_t *src = _sbl_flash_start;
+    uint32_t *dst = _sbl_ram_start;
+    while (dst < _sbl_ram_end) { *dst++ = *src++; }   /* stage image into RAM */
 
     BootMgr_QuietInterrupts();               /* the SBL's table has no peripheral handlers */
     SysTick->CTRL = 0;                       /* stop SysTick (no handler in SBL table) */
     __DSB(); __ISB();
-    SCB->VTOR = (uint32_t)&_sbl_ram_start;   /* vector table now in RAM */
-    __set_MSP(_sbl_ram_start);                /* [0] initial stack pointer */
-    ((pFunction)(*(&_sbl_ram_start + 1)))();  /* [1] reset vector: jump into RAM */
+    SCB->VTOR = (uint32_t)_sbl_ram_start;     /* vector table now in RAM */
+    __set_MSP(_sbl_ram_start[0]);             /* [0] initial stack pointer */
+    ((pFunction)_sbl_ram_start[1])();         /* [1] reset vector: jump into RAM */
 }
 
 /* USER CODE END 0 */
