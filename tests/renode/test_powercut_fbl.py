@@ -36,7 +36,7 @@ def sbl_run(session):
     ser = RenodeSerial(session, timeout=5)
     fbl = open(os.path.join(ROOT, BUILD, "fbl.bin"), "rb").read()
     new_fbl = fbl + b"\xC3" * 16                  # a different, still bootable, image
-    rel, hdr = pc.make_signed("fbl_new", new_fbl, "1.6.0", "fbl")
+    rel, hdr = pc.make_signed("fbl_new", new_fbl, "2.1.0", "fbl")
     pc.stage(session, ser, rel, 40)
     pre = session.dump_flash()
 

@@ -68,7 +68,7 @@ def alive(session, ser):
     """True if the bootloader answers a version request after a power-up."""
     ser.timeout = 2
     ok, p = bl_host.transact(ser, bl_host.CMD_GET_VER)
-    return bool(ok and list(p) == [100, 1, 5, 0])
+    return bool(ok and list(p) == [100, 2, 0, 0])
 
 
 # ---- generated states for the FBL self-update --------------------------------

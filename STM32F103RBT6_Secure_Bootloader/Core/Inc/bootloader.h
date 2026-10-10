@@ -27,8 +27,8 @@
 
 /* what GET_VER and the UDS version identifier report */
 #define BL_VENDOR_ID   100U
-#define BL_SW_MAJOR    1U
-#define BL_SW_MINOR    5U
+#define BL_SW_MAJOR    2U
+#define BL_SW_MINOR    0U
 #define BL_SW_PATCH    0U
 
 #define BM_STATE_ADDR   0x0801F000U   /* config page holding the FBL CRC record */

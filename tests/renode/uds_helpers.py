@@ -46,7 +46,7 @@ def active_session(ser):
 def wait_for_fbl(session, ser, limit=6.0):
     """Run until the FBL answers a version request, then return straight away (the boot delay
     is still counting). The probe reply is consumed here so it cannot be mistaken for the next one."""
-    reply = bytes([bl_host.ACK, 4, 100, 1, 5, 0])
+    reply = bytes([bl_host.ACK, 4, 100, 2, 0, 0])
     probe = bl_host.build_frame(bl_host.CMD_GET_VER)
     waited = 0.0
     while waited < limit:
