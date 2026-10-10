@@ -94,3 +94,19 @@ def test_newer_signed_version_is_accepted(session, ser, app_bin):
     assert stage_and_verify(session, ser, rel, hdr)
     tail = session.read_word(SLOT_A + len(app_bin))
     assert tail == 0x77777777, "the new image was not promoted into Slot A"
+
+
+def test_the_installed_app_really_runs(session):
+    """Installing is not the same as starting: reset without B1 and watch the app blink LD2.
+
+    The jump to the app once popped registers from the new stack, past the end of RAM. That
+    bus-faults on the chip, and in the emulator too now that its RAM is the real 20 KB.
+    """
+    gpioa_odr, ld2 = 0x4001080C, 1 << 5
+    session.reboot(hold_b1=False)
+    seen = set()
+    for _ in range(12):                       # the demo app toggles LD2 every 150 ms
+        seen.add(session.read_word(gpioa_odr) & ld2)
+        session.run_for(0.1)
+    session.reboot()                          # back into the bootloader
+    assert seen == {0, ld2}, "LD2 never toggled, so the application is not running"

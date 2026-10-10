@@ -25,6 +25,11 @@ crc: CRC.STM32_CRC @ sysbus 0x40023000
 bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
     peripheralBase: 0x40000000
 
+// The stock platform gives the chip far more RAM than it has. With the real 20 KB an access
+// past the end of RAM faults in the emulator as it does on the board.
+sram:
+    size: 0x5000
+
 // Registers the bootloader only pokes while polling. Plain memory is enough
 // (SPI status reads as "nothing received", watchdog keys are accepted) and
 // avoids Renode's slow unimplemented-register path.
