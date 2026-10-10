@@ -135,6 +135,21 @@ What it does *not* fully cover on this particular MCU:
   level 1 it bites: dropping read protection forces a mass erase, so the lock can be removed
   only by wiping the chip, never by keeping a *modified* Boot Manager.
 
+- **Signatures are checked at install time, not at every boot.** At boot the Boot Manager and
+  the FBL check CRCs, which catch corruption but not a deliberate replacement: someone with
+  debugger write access to an unlocked chip can put in their own code and a matching CRC.
+  An Ed25519 check takes a couple of seconds on this MCU, which is why it is not done per boot.
+- **The secret keys are the same in every board.** One dumped board gives up the ChaCha20 and
+  SecurityAccess keys for all of them. Signing is unaffected.
+- **Images are not bound to a device,** and installing the version that is already installed
+  is allowed. Any correctly signed image of the same or a newer version installs on any board.
+- **The anti-rollback record lives in ordinary flash.** It survives power cuts and bus-side
+  attackers; a physical attacker who can rewrite flash can reset it.
+- **No fault-injection hardening.** A well-timed voltage or clock glitch could skip a check.
+- **The wireless links are open.** The gateway's Wi-Fi password is a published default until
+  you set your own, and BLE has no pairing. Anyone in range can talk to the bootloader; they
+  cannot install unsigned code, but they can wipe the staging slot or trigger the lockout.
+
 Hardening if the threat model included physical attackers:
 
 - Enable **RDP level 1** alongside WRP so any unlock triggers a mass erase (tamper-evident):
@@ -370,13 +385,39 @@ regenerate.
 
 ## Future work
 
-- Delta updates — send a binary patch instead of the whole image
-- True A/B ping-pong with automatic rollback to the last good app
-- Ethernet OTA
-- CAN-FD
+Nothing below is needed for what the project does today. The first list could be built on this
+same board in software; the second needs different hardware.
+
+**In software, on this board**
+
+- Per-device SecurityAccess keys, derived on the PC from a master secret and the chip's unique
+  ID, so a dumped board exposes only itself
+- An optional signature check at every boot (a build option: it adds 2 to 4 s to each start)
+- Device-bound images (an optional device ID in the signed header) and a policy switch that
+  refuses to reinstall the installed version
+- A second signing-key slot with a signed key-rotation command
+- An authenticated wireless link: per-device Wi-Fi password, BLE pairing, or an authenticated
+  session on top of the gateway
+- Glitch hardening of the accept decisions (double checks, no single-branch "accept")
+- True A/B with automatic rollback to the last good app (keep the old app in the staging slot
+  until the new one confirms itself)
+- A minimal recovery loader inside the Boot Manager, as a stand-in for a golden image
+- Configurable CAN bit rate and larger ISO-TP blocks for faster transfers
+- More UDS: further security levels, DTC storage, more services
+- Delta updates: send a binary patch instead of the whole image
 - On-chip USB DFU
-- An internal golden/factory recovery image
-- A tamper-proof hardware rollback counter
+- A port to a second MCU family
+- More bench evidence: an automated power-cut rig with flash read-back, a second compiler,
+  and the two-board iso14229 CAN test
+- A MISRA C compliance report and ISO 26262 / ISO 21434 style process evidence
+
+**Needs different hardware**
+
+- CAN FD (the F103's controller is classic CAN only) and Ethernet OTA / DoIP
+- A tamper-proof rollback counter (one-time-programmable memory or a secure element)
+- Closing flash read-out for good: RDP level 2 or TrustZone (STM32 H5, L5, U5), or keys held
+  in a secure element
+- A full golden / factory image (needs more flash than the 128 KB here)
 
 ## Diagrams
 
