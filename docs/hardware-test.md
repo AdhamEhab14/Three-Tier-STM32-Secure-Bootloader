@@ -120,10 +120,11 @@ once. Do each twice.
 3. Only on a board you are ready to mass-erase: `lockrdp`. Expect: reset (power-cycle if the
    ST-Link is attached), the board still boots, CubeProgrammer shows RDP level 1 and the WRP
    still set, and a flash read with the ST-Link is refused. Then run `updatefbl` once more:
-   the self-update must still work with RDP on (if the RAM routine is refused flash access,
-   the Boot Manager finishes the copy from Slot B, so the board should still come up with
-   the new FBL; note which happened). Undo with CubeProgrammer: RDP back to AA, which
-   mass-erases, then reflash everything.
+   the self-update must still work with RDP on. Undo with the read-out unprotect, which
+   mass-erases: `STM32_Programmer_CLI -c port=SWD -rdu` (writing `RDP=0xAA` through `-ob` did
+   not take on the bench). The WRP bits survive it, so clear them (`-ob WRP0=0x1 WRP1=0x1
+   WRP2=0x1 WRP3=0x1`) before reflashing the Boot Manager. After any debugger access with RDP
+   on, power-cycle the board before expecting it to run.
 4. Recovery with the watchdog running: with the demo app installed (it starts the watchdog),
    hold B1 at reset and run `flash` with a new signed app. Expect: the install finishes; the
    board must not reset in the middle of the signature check.
@@ -133,3 +134,24 @@ once. Do each twice.
 For each step: pass or fail, the transfer time for step 5, and anything that behaved
 differently from the line above. A failure in 1 to 4 is a firmware bug to report. A failure
 in 5 or 6 alone is most likely wiring, termination or a bus peripheral issue.
+
+## Bench record
+
+**2026-10-10, Nucleo-F103RB, FBL built from the 2.0.0 sources (it still reported 1.5.0 that
+day), own keys.** Blue Pill bridge on a USB-TTL adapter, ESP32 gateway on USART1.
+
+| Step | Result |
+|---|---|
+| 1. Flash, boot, B1 entry, version, self-test | Pass |
+| 2. Signed install; older version refused; tampered image refused; encrypted install | Pass |
+| 3. Raw commands fenced | Not run by hand (covered by the emulator suite) |
+| 4. UDS: `udsinfo`, `udsflash`, and `tests/test_uds_hardware.py` (16 of 16) | Pass. The S3 timeout was not timed by hand |
+| 5. Version and signed install over UART, CAN, SPI, I2C, Wi-Fi and BLE; `updatefbl` over CAN | Pass. Transfer times were not written down |
+| 6. iso14229 server on CAN (self-test build, two-board client) | Not run |
+| 7. Plug pulled before the app rewrite, in the middle of it, and during the FBL self-update | Pass: old app intact; then app refused with the FBL alive and the version floor kept, repaired by a reinstall; then the Boot Manager finished the FBL update alone |
+| 8. `updatefbl`; `lockbm` (WRP read back); `lockrdp` (RDP on, WRP kept, ST-Link read refused, `updatefbl` still works); installs with the app's watchdog started | Pass |
+
+Found on the bench and fixed the same day: the jump to the application (and into the RAM
+updater) bus-faulted on the real chip, see the changelog; `tests/test_uds_hardware.py` ran into
+the wrong-key delay it predates. Measured: on a 26 KB image the board spends about 3.7 s
+between the last byte staged and the install reply (signature check, then the rewrite).

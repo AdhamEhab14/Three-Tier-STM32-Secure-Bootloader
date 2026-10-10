@@ -263,7 +263,7 @@ for 5 s falls back to default and locks again, so keep `3E 00` going during long
 Sign the new FBL binary (type `fbl`) and push it over any transport:
 
 ```
-python sign_tool.py sign new_fbl.bin 1.5.0 fbl
+python sign_tool.py sign new_fbl.bin 2.0.0 fbl
 python bl_host.py COMx updatefbl new_fbl.bin
 ```
 
@@ -289,7 +289,9 @@ python bl_host.py COMx lockrdp
 ```
 
 No flash read-out over SWD/JTAG after that, and going back to level 0 mass-erases the chip,
-so the keys go with it. The Boot Manager's write protection is kept. Both lock commands
+so the keys go with it (`STM32_Programmer_CLI -c port=SWD -rdu` is the unprotect that does it).
+The Boot Manager's write protection is kept, and the bootloader can still update itself and the
+app with the lock on. Both lock commands
 first unlock (programming session and SecurityAccess) on their own, and the board refuses
 them without it.
 

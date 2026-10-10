@@ -6,6 +6,13 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-10
+
+The bootloader now reports version 2.0.0. It is not compatible with a 1.x board without a
+reflash: the SecurityAccess algorithm, the app metadata, the image header for encrypted images
+and the session rules all changed (details below). Bench-tested on a Nucleo-F103RB over all six
+links, including real power cuts; the record is in `docs/hardware-test.md`.
+
 ### Fixed (found on the bench)
 - The jump to the application, and the jump into the RAM updater, bus-faulted on a real chip:
   an optimised build popped its saved registers from the new stack right after loading it,

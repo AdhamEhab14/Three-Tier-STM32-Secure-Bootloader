@@ -12,7 +12,7 @@ import bl_host
 def test_fbl_answers_version(ser):
     ok, p = bl_host.transact(ser, bl_host.CMD_GET_VER)
     assert ok
-    assert list(p) == [100, 1, 5, 0]          # vendor 100, v1.5.0
+    assert list(p) == [100, 2, 0, 0]          # vendor 100, v2.0.0
 
 
 def test_power_on_self_test_passes(ser):
