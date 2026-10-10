@@ -48,6 +48,14 @@
 typedef void (*pFunction)(void);
 typedef struct { uint32_t magic; uint32_t crc; uint32_t state; } bm_state_t;
 
+/* Load a new stack pointer and jump, in assembly on purpose: nothing may touch the stack
+   between the two instructions, and C gives the compiler the freedom to (it bit the FBL). */
+__attribute__((naked, noreturn)) static void bm_switch_stack_and_jump(
+    uint32_t sp __attribute__((unused)), uint32_t entry __attribute__((unused)))
+{
+    __asm volatile ("msr msp, r0 \n bx r1");   /* r0 = sp, r1 = entry (the two arguments) */
+}
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -187,8 +195,8 @@ int main(void)
       HAL_DeInit();
       SysTick->CTRL = 0; SysTick->LOAD = 0; SysTick->VAL = 0;
       SCB->VTOR = FBL_BASE;
-      __set_MSP(*(volatile uint32_t *)FBL_BASE);
-      ((pFunction)(*(volatile uint32_t *)(FBL_BASE + 4)))();   /* -> FBL, never returns */
+      bm_switch_stack_and_jump(*(volatile uint32_t *)FBL_BASE,          /* [0] FBL stack pointer */
+                               *(volatile uint32_t *)(FBL_BASE + 4));   /* [1] FBL reset handler, never returns */
   }
 
   /* No valid FBL and nothing to recover from -> slow error blink. */

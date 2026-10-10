@@ -24,6 +24,7 @@ never touched.
 """
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "host"))
 import seckey  # noqa: E402
@@ -74,11 +75,23 @@ def to_programming(hw):
     return hw.request([0x10, 0x02])
 
 
+def request_seed(hw):
+    """Ask for a seed, waiting out the board's delays: 0x37 for a second after power-up,
+    0x36 for a second after a wrong key (ten after three in a row)."""
+    for _ in range(12):
+        resp = hw.request([0x27, 0x01])
+        if resp[:2] == bytes([0x7F, 0x27]) and resp[2] in (0x36, 0x37):
+            time.sleep(1.1)
+            continue
+        return resp
+    return resp
+
+
 def unlock(hw):
     """Programming session + seed/key. A session change re-locks, so this always
     starts from a known state."""
     to_programming(hw)
-    seed = int.from_bytes(hw.request([0x27, 0x01])[2:6], "big")
+    seed = int.from_bytes(request_seed(hw)[2:6], "big")
     return hw.request([0x27, 0x02, *be(prod_key(seed), 4)])
 
 
@@ -134,13 +147,23 @@ def test_seed_key_unlocks(hw):
 
 def test_wrong_key_rejected(hw):
     to_programming(hw)
-    hw.request([0x27, 0x01])
+    request_seed(hw)
     nrc(hw.request([0x27, 0x02, 0x00, 0x00, 0x00, 0x00]), 0x27, 0x35)
+
+
+def test_a_wrong_key_starts_a_delay(hw):
+    """Straight after a wrong key the board refuses even a seed request, for about a second."""
+    to_programming(hw)
+    request_seed(hw)
+    nrc(hw.request([0x27, 0x02, 0x00, 0x00, 0x00, 0x00]), 0x27, 0x35)
+    nrc(hw.request([0x27, 0x01]), 0x27, 0x36)
+    time.sleep(1.2)
+    positive(hw.request([0x27, 0x01]), 0x27)
 
 
 def test_sendkey_wrong_length(hw):
     to_programming(hw)
-    hw.request([0x27, 0x01])
+    request_seed(hw)
     nrc(hw.request([0x27, 0x02, 0x11, 0x22]), 0x27, 0x13)
 
 

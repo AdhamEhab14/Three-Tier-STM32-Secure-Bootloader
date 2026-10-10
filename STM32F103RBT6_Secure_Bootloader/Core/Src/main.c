@@ -113,6 +113,16 @@ static void bl_selftest_report(int code)
 }
 #endif
 
+/* Load a new stack pointer and jump, in assembly on purpose. Written in C, the compiler is
+   free to keep using the old stack frame after the switch: an optimised build popped its
+   saved registers from the NEW stack, one word past the end of RAM, and bus-faulted on the
+   real chip. Nothing may touch the stack between these two instructions. */
+__attribute__((naked, noreturn)) static void BootMgr_SwitchStackAndJump(
+    uint32_t sp __attribute__((unused)), uint32_t entry __attribute__((unused)))
+{
+    __asm volatile ("msr msp, r0 \n bx r1");   /* r0 = sp, r1 = entry (the two arguments) */
+}
+
 /* Boot Manager -> Application handoff (Slot A) */
 /* Mask and clear every peripheral interrupt. The CAN receive interrupt is on while the FBL
    runs; after the jump its vector would belong to the app, and under the SBL to nothing. */
@@ -142,8 +152,8 @@ void BootMgr_JumpToApp(void)
     SysTick->VAL  = 0;
 
     SCB->VTOR = APP_ADDRESS;                                   /* relocate vector table */
-    __set_MSP(*(volatile uint32_t *)APP_ADDRESS);             /* load app stack pointer */
-    ((pFunction)(*(volatile uint32_t *)(APP_ADDRESS + 4)))(); /* jump to app reset handler */
+    BootMgr_SwitchStackAndJump(*(volatile uint32_t *)APP_ADDRESS,         /* [0] app stack pointer */
+                               *(volatile uint32_t *)(APP_ADDRESS + 4));  /* [1] app reset handler */
 }
 
 extern uint32_t _sbl_flash_start[], _sbl_ram_start[], _sbl_ram_end[];   /* linker symbols */
@@ -159,8 +169,8 @@ void BootMgr_RunSBL(void)
     SysTick->CTRL = 0;                       /* stop SysTick (no handler in SBL table) */
     __DSB(); __ISB();
     SCB->VTOR = (uint32_t)_sbl_ram_start;     /* vector table now in RAM */
-    __set_MSP(_sbl_ram_start[0]);             /* [0] initial stack pointer */
-    ((pFunction)_sbl_ram_start[1])();         /* [1] reset vector: jump into RAM */
+    BootMgr_SwitchStackAndJump(_sbl_ram_start[0],    /* [0] initial stack pointer */
+                               _sbl_ram_start[1]);   /* [1] reset vector: jump into RAM */
 }
 
 /* USER CODE END 0 */

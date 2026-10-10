@@ -6,6 +6,14 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (found on the bench)
+- The jump to the application, and the jump into the RAM updater, bus-faulted on a real chip:
+  an optimised build popped its saved registers from the new stack right after loading it,
+  one word past the end of RAM. All three stack switches (Boot Manager to FBL, FBL to app,
+  FBL to SBL) now go through a two-instruction assembly trampoline. The emulator did not
+  catch it because its RAM was far larger than the chip's; it now has the real 20 KB, and a
+  test checks that an installed app really runs.
+
 ### Fixed (found by the power-cut tests)
 - A power cut during the FBL self-update left the Boot Manager blinking forever; it now
   redoes the copy from Slot B.
